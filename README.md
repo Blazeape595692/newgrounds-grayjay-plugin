@@ -39,6 +39,18 @@ For development, the Grayjay dev portal (enable developer mode, then open `http:
 
 The plugin is unsigned, so Grayjay will show an "unsigned plugin" warning. That's normal for self-hosted plugins.
 
+### Signing
+
+The plugin is signed, so Grayjay can tell that updates come from the same developer. `NewgroundsConfig.json` holds the script's signature (`scriptSignature`) and the public key (`scriptPublicKey`). The private key is kept outside this repo.
+
+After every change to `NewgroundsScript.js`, re-sign it before committing:
+
+```bash
+./sign.sh
+```
+
+It uses the key at `~/.config/newgrounds-grayjay-plugin/signing-key.pem` by default, or a path you pass. Keep that key backed up: if it's lost, updates signed with a new key make Grayjay warn that the key changed.
+
 ## Logging in
 In Grayjay, open the Newgrounds source and tap **Login**, then sign in to Newgrounds. Logging in adds:
 - **Adult-rated (A) content**: plays when your Newgrounds account is set to show adult content.
