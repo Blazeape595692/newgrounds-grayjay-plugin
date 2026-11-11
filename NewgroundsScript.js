@@ -1,7 +1,7 @@
 // Newgrounds source plugin for Grayjay
-// Supports: featured movies home feed, movie + audio search, user search,
+// Supports: featured movies home feed, mixed movie + audio search, user search,
 // movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio),
-// comments (Newgrounds reviews), recommendations (random featured movies).
+// comments (Newgrounds reviews), recommendations (random featured movies / audio).
 
 const PLATFORM = "Newgrounds";
 const BASE = "https://www.newgrounds.com";
@@ -52,6 +52,7 @@ source.getSearchCapabilities = function () {
         sorts: [],
         filters: [
             new FilterGroup("Content", [
+                new FilterCapability("All", "all", "all"),
                 new FilterCapability("Movies", "movies", "movies"),
                 new FilterCapability("Audio", "audio", "audio")
             ], false, "content")
@@ -59,22 +60,40 @@ source.getSearchCapabilities = function () {
     };
 };
 
+// Searches movies and audio together by default; the "Content" filter narrows it to one.
 source.search = function (query, type, order, filters) {
-    let kind = "movies";
+    let kind = "all";
     if (filters && filters.content && filters.content.length > 0)
         kind = filters.content[0];
-    return new SearchPager(query, kind, 1);
+    const kinds = kind === "movies" || kind === "audio" ? [kind] : ["movies", "audio"];
+    return new SearchPager(query, kinds, 1);
 };
 
 class SearchPager extends VideoPager {
-    constructor(query, kind, page) {
-        const html = getHtml(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`);
-        const results = parseCards(html);
-        const hasMore = html.includes(`page=${page + 1}"`) || html.includes(`page=${page + 1}&`);
-        super(results, results.length > 0 && hasMore, { query, kind, page });
+    constructor(query, kinds, page) {
+        const lists = [];
+        const stillMore = [];
+        for (const kind of kinds) {
+            const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, false);
+            if (!resp.isOk) {
+                if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
+                continue;
+            }
+            const html = resp.body;
+            const items = parseCards(html);
+            lists.push(items);
+            if (items.length > 0 && (html.includes(`page=${page + 1}"`) || html.includes(`page=${page + 1}&`)))
+                stillMore.push(kind);
+        }
+        // Alternate movie, audio, movie, audio... so both show near the top.
+        const results = [];
+        for (let i = 0; lists.some(l => i < l.length); i++)
+            for (const l of lists)
+                if (i < l.length) results.push(l[i]);
+        super(results, stillMore.length > 0, { query, kinds: stillMore, page });
     }
     nextPage() {
-        return new SearchPager(this.context.query, this.context.kind, this.context.page + 1);
+        return new SearchPager(this.context.query, this.context.kinds, this.context.page + 1);
     }
 }
 
@@ -245,33 +264,40 @@ function parsePageMeta(html) {
 
 // ---------------------------------------------------------------- recommendations
 
-// "Recommended" under a movie: 20 random featured movies, picked from a few
-// random pages of the featured feed.
+// "Recommended" under a submission: 20 random picks from the featured feed of
+// the same kind (featured movies under a movie, featured audio under audio),
+// taken from a few random pages of that feed.
 const RECOMMEND_COUNT = 20;
 const RECOMMEND_PAGES = 3;
-let featuredTotal = 0;
+const FEATURED_FEEDS = {
+    movies: { path: "movies/featured", pageSize: 20, total: 0 },
+    audio: { path: "audio/featured", pageSize: 30, total: 0 }
+};
 
 source.getContentRecommendations = function (url, initialData) {
     const v = url.match(REGEX_VIDEO_URL);
-    if (!v) return new VideoPager([], false);
+    const a = url.match(REGEX_AUDIO_URL);
+    if (!v && !a) return new VideoPager([], false);
+    const feed = v ? FEATURED_FEEDS.movies : FEATURED_FEEDS.audio;
+    const currentId = v ? v[1] : "audio-" + a[1];
 
-    if (!featuredTotal) {
-        const first = getJson(`${BASE}/movies/featured?offset=0&inner=1`, true);
-        featuredTotal = (first && first.total) || 0;
+    if (!feed.total) {
+        const first = getJson(`${BASE}/${feed.path}?offset=0&inner=1`, true);
+        feed.total = (first && first.total) || 0;
     }
-    const pageCount = Math.max(1, Math.ceil(featuredTotal / PAGE_SIZE));
+    const pageCount = Math.max(1, Math.ceil(feed.total / feed.pageSize));
 
     const offsets = {};
     while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
-        offsets[Math.floor(Math.random() * pageCount) * PAGE_SIZE] = true;
+        offsets[Math.floor(Math.random() * pageCount) * feed.pageSize] = true;
 
     let pool = [];
     for (const offset of Object.keys(offsets)) {
-        const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`, true);
+        const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
         if (json && json.content) pool = pool.concat(parseCards(json.content));
     }
 
-    const seen = { [v[1]]: true };
+    const seen = { [currentId]: true };
     pool = pool.filter(p => !seen[p.id.value] && (seen[p.id.value] = true));
     for (let i = pool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
