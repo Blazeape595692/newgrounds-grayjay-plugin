@@ -211,14 +211,20 @@ source.getContentDetails = function (url) {
 
 function getMovieDetails(id) {
     const pageUrl = `${BASE}/portal/view/${id}`;
-    const html = getHtml(pageUrl);
+    // Adult (A) pages can answer 403 "Login required" (or be region-blocked) even
+    // when the video itself is available, so fall back to the video info alone.
+    const pageResp = http.GET(pageUrl, {}, loggedIn());
+    const html = pageResp.isOk ? pageResp.body : "";
+    const pageBlocked = !pageResp.isOk;
 
     const resp = http.GET(`${BASE}/portal/video/${id}`, XHR, loggedIn());
     let json = null;
     try { json = JSON.parse(resp.body); } catch (e) { }
     if (!resp.isOk || !json || !json.sources) {
         const err = json && json.errors ? json.errors.join(" ") : `HTTP ${resp.code}`;
-        throw new ScriptException("Could not load this movie (it may be adult-rated or a Flash/Ruffle submission): " + err);
+        if (pageBlocked)
+            throw new ScriptException(`Newgrounds blocked this movie (${pageResp.code}). Adult-rated movies need you logged in, and may be blocked in your region.`);
+        throw new ScriptException("Could not load this movie (it may be a Flash/Ruffle submission): " + err);
     }
 
     const sources = [];
@@ -241,11 +247,13 @@ function getMovieDetails(id) {
     sources.sort((a, b) => b.height - a.height);
 
     const meta = parsePageMeta(html);
+    // A blocked page only happens for adult-rated movies.
+    const rating = match(html, /<h2 class="rated-([etma])"/) || (pageBlocked ? "a" : null);
     return new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, id, config.id),
-        name: tagTitle(decode(json.title) || meta.title, match(html, /<h2 class="rated-([etma])"/)),
+        name: tagTitle(decode(json.title) || meta.title, rating),
         thumbnails: thumbs(meta.thumbnail),
-        author: meta.author ?? authorFromName(json.author),
+        author: meta.author ?? withAvatars([{ author: authorFromName(json.author) }])[0].author,
         uploadDate: meta.date,
         datetime: meta.date,
         duration: 0,
@@ -381,7 +389,9 @@ source.getComments = function (url) {
     const a = url.match(REGEX_AUDIO_URL);
     if (!v && !a) return new CommentPager([], false, {});
     const pageUrl = v ? `${BASE}/portal/view/${v[1]}` : `${BASE}/audio/listen/${a[1]}`;
-    const html = getHtml(pageUrl);
+    const resp = http.GET(pageUrl, {}, loggedIn());
+    if (!resp.isOk) return new CommentPager([], false, {}); // e.g. a blocked adult page
+    const html = resp.body;
 
     let ctx = null;
     const nav = html.match(/\/reviews\/portal\/(\d+)\/(\d+)\/date\//);
