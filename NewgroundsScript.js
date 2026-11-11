@@ -1,6 +1,7 @@
 // Newgrounds source plugin for Grayjay
 // Supports: featured movies home feed, movie + audio search, user search,
-// movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio).
+// movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio),
+// comments (Newgrounds reviews).
 
 const PLATFORM = "Newgrounds";
 const BASE = "https://www.newgrounds.com";
@@ -240,6 +241,90 @@ function parsePageMeta(html) {
     if (!isNaN(ratingValue)) rating = new RatingScaler(ratingValue / 10);
 
     return { title, thumbnail, date, views, description, author, rating };
+}
+
+// ---------------------------------------------------------------- comments (reviews)
+
+// Newgrounds calls comments "reviews". The submission page holds the first 5;
+// later pages come from /reviews/portal/ID/TYPE/date/PAGE, 5 per page.
+const REVIEW_PAGES_PER_BATCH = 4;
+
+source.getComments = function (url) {
+    const v = url.match(REGEX_VIDEO_URL);
+    const a = url.match(REGEX_AUDIO_URL);
+    if (!v && !a) return new CommentPager([], false, {});
+    const pageUrl = v ? `${BASE}/portal/view/${v[1]}` : `${BASE}/audio/listen/${a[1]}`;
+    const html = getHtml(pageUrl);
+
+    let ctx = null;
+    const nav = html.match(/\/reviews\/portal\/(\d+)\/(\d+)\/date\//);
+    if (nav) {
+        let last = 1;
+        const re = /\/reviews\/portal\/\d+\/\d+\/date\/(\d+)/g;
+        let m;
+        while ((m = re.exec(html)) !== null) last = Math.max(last, parseInt(m[1]));
+        ctx = { pageUrl, id: nav[1], type: nav[2], next: 2, last };
+    }
+    return new ReviewPager(parseReviews(html, pageUrl), ctx);
+};
+
+source.getSubComments = function (comment) {
+    return new CommentPager([], false, {});
+};
+
+class ReviewPager extends CommentPager {
+    constructor(results, ctx) {
+        super(results, !!ctx && ctx.next <= ctx.last, ctx ?? {});
+    }
+    nextPage() {
+        const c = this.context;
+        let results = [];
+        const stop = Math.min(c.last, c.next + REVIEW_PAGES_PER_BATCH - 1);
+        let page = c.next;
+        for (; page <= stop; page++) {
+            const resp = http.GET(`${BASE}/reviews/portal/${c.id}/${c.type}/date/${page}`, XHR, false);
+            if (!resp.isOk) break;
+            results = results.concat(parseReviews(resp.body, c.pageUrl));
+        }
+        return new ReviewPager(results, { ...c, next: page });
+    }
+}
+
+function parseReviews(html, contextUrl) {
+    const out = [];
+    const re = /class="pod-body review"[\s\S]*?data-review-id="(\d+)"([\s\S]*?)ngutils\.review\.register/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const id = m[1];
+        const block = m[2];
+
+        const userUrl = match(block, /<a href="(https:\/\/[a-z0-9_-]+\.newgrounds\.com)"/i);
+        const name = decode(match(block, /<span class="padded-half-left">([^<]+)<\/span>/) ??
+            match(block, /title="([^"]+)"/)) || "Anonymous";
+        const avatar = match(block, /<image href="([^"]+)"/) ?? "";
+        const author = userUrl
+            ? new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, userUrl, avatar)
+            : new PlatformAuthorLink(new PlatformID(PLATFORM, "", config.id), name, "", avatar);
+
+        // Times are shown in Newgrounds server time (US Eastern).
+        const timeStr = match(block, /<time[^>]*>([^<]+)<\/time>/);
+        const date = timeStr ? Math.floor(Date.parse(timeStr.trim().replace(" ", "T") + "-05:00") / 1000) || 0 : 0;
+
+        const score = match(block, /title="Score:\s*([\d.]+)\/5/);
+        const body = htmlToText(match(block, /class="review-body[^"]*"[^>]*>([\s\S]*?)<\/div>/) ?? "");
+        const message = score ? `★ ${parseFloat(score)}/5\n${body}` : body;
+
+        out.push(new Comment({
+            contextUrl: contextUrl,
+            author: author,
+            message: message,
+            rating: new RatingLikes(0),
+            date: date,
+            replyCount: 0,
+            context: { reviewId: id }
+        }));
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------- channels

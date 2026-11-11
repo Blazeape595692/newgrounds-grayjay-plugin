@@ -11,6 +11,7 @@ Files:
 - **Search**: movies by default; use the "Content" filter to switch to audio
 - **Channel search**: finds Newgrounds users
 - **Playback**: movies stream as MP4 (360p/720p/1080p, whatever the upload has); audio plays as MP3
+- **Comments**: Newgrounds reviews show as comments, with the reviewer, date and star score (newest first)
 - **Channels**: `https://USERNAME.newgrounds.com`: profile, fan count, and all of the user's movies, then their audio
 - **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`
 
@@ -36,7 +37,7 @@ For development, the Grayjay dev portal (enable developer mode, then open `http:
 The plugin is unsigned, so Grayjay will show an "unsigned plugin" warning. That's normal for self-hosted plugins.
 
 ## Limitations
+- Reviews have no replies or likes, since Newgrounds doesn't show them publicly.
 - Adult-rated (A) content needs a logged-in session, so it will fail to play.
 - Old Flash/Ruffle submissions with no video stream won't play.
 - Newgrounds doesn't expose duration in its listings, so Grayjay fills it in once playback starts.
-- Comments and reviews aren't implemented.
