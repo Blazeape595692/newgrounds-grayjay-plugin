@@ -14,10 +14,17 @@ Files:
 - **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`
 
 ## Install
-1. Host the three files together in one folder on any static HTTPS host (GitHub Pages, a GitLab/Codeberg raw URL, etc.).
-2. Change `sourceUrl` in `NewgroundsConfig.json` to the config's real public URL.
-3. In Grayjay, add a source using that config URL: either open
-   `grayjay://plugin/https://YOUR_HOST/NewgroundsConfig.json` on your phone, or turn the URL into a QR code and scan it from Sources → Add.
+The plugin is hosted on GitHub Pages. Config URL:
+
+```
+https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json
+```
+
+In Grayjay, add a source using that URL: either open
+`grayjay://plugin/https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json` on your phone, or turn the URL into a QR code and scan it from Sources → Add.
+
+### Hosting it yourself
+Host the three files together in one folder on any static HTTPS host (GitHub Pages, a GitLab/Codeberg raw URL, etc.), then change `sourceUrl` in `NewgroundsConfig.json` to the config's real public URL.
 
 For development, the Grayjay dev portal (enable developer mode, then open `http://PHONE_IP:11337/dev`) can load the config URL and inject it directly.
 
