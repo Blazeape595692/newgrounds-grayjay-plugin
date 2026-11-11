@@ -11,6 +11,7 @@ Files:
 - **Search**: movies by default; use the "Content" filter to switch to audio
 - **Channel search**: finds Newgrounds users
 - **Playback**: movies stream as MP4 (360p/720p/1080p, whatever the upload has); audio plays as MP3
+- **Recommendations**: under each movie, 20 random movies from the featured feed (new picks every time)
 - **Comments**: Newgrounds reviews show as comments, with the reviewer, date and star score (newest first)
 - **Channels**: `https://USERNAME.newgrounds.com`: profile, fan count, and all of the user's movies, then their audio
 - **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`

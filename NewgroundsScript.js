@@ -1,7 +1,7 @@
 // Newgrounds source plugin for Grayjay
 // Supports: featured movies home feed, movie + audio search, user search,
 // movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio),
-// comments (Newgrounds reviews).
+// comments (Newgrounds reviews), recommendations (random featured movies).
 
 const PLATFORM = "Newgrounds";
 const BASE = "https://www.newgrounds.com";
@@ -242,6 +242,43 @@ function parsePageMeta(html) {
 
     return { title, thumbnail, date, views, description, author, rating };
 }
+
+// ---------------------------------------------------------------- recommendations
+
+// "Recommended" under a movie: 20 random featured movies, picked from a few
+// random pages of the featured feed.
+const RECOMMEND_COUNT = 20;
+const RECOMMEND_PAGES = 3;
+let featuredTotal = 0;
+
+source.getContentRecommendations = function (url, initialData) {
+    const v = url.match(REGEX_VIDEO_URL);
+    if (!v) return new VideoPager([], false);
+
+    if (!featuredTotal) {
+        const first = getJson(`${BASE}/movies/featured?offset=0&inner=1`, true);
+        featuredTotal = (first && first.total) || 0;
+    }
+    const pageCount = Math.max(1, Math.ceil(featuredTotal / PAGE_SIZE));
+
+    const offsets = {};
+    while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
+        offsets[Math.floor(Math.random() * pageCount) * PAGE_SIZE] = true;
+
+    let pool = [];
+    for (const offset of Object.keys(offsets)) {
+        const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`, true);
+        if (json && json.content) pool = pool.concat(parseCards(json.content));
+    }
+
+    const seen = { [v[1]]: true };
+    pool = pool.filter(p => !seen[p.id.value] && (seen[p.id.value] = true));
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return new VideoPager(pool.slice(0, RECOMMEND_COUNT), false);
+};
 
 // ---------------------------------------------------------------- comments (reviews)
 
