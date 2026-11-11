@@ -628,7 +628,7 @@ class ChannelContentPager extends VideoPager {
                 const years = Object.keys(json.items).sort((a, b) => parseInt(b) - parseInt(a));
                 for (const y of years)
                     for (const cardHtml of json.items[y])
-                        results = results.concat(parseCards(cardHtml, author));
+                        results = results.concat(datedCards(cardHtml, author, parseInt(y)));
             }
             results = filterRatings(results, allowed);
             results.sort((a, b) => parseInt(b.id.value.replace(/\D/g, "")) - parseInt(a.id.value.replace(/\D/g, "")));
@@ -645,6 +645,22 @@ class ChannelContentPager extends VideoPager {
         const c = this.context;
         return new ChannelContentPager(c.user, c.author, c.kind, c.page, c.allowed);
     }
+}
+
+// Channel cards only say which year a video is from. The "?f<number>" on the
+// thumbnail link is when the thumbnail was uploaded, which for most videos is the
+// upload time, so use it when it falls in that year, else January 1 of the year.
+// Grayjay's subscription feed needs these dates to show channel videos.
+function datedCards(cardHtml, author, year) {
+    const items = parseCards(cardHtml, author);
+    const f = parseInt(match(cardHtml, /\.ngfiles\.com\/[^"]*\?f(\d{9,11})/));
+    let date = year ? Math.floor(Date.UTC(year, 0, 1) / 1000) : 0;
+    if (f && (!year || new Date(f * 1000).getUTCFullYear() === year)) date = f;
+    for (const v of items) {
+        v.uploadDate = date;
+        v.datetime = date;
+    }
+    return items;
 }
 
 function channelName(url) {
