@@ -243,7 +243,7 @@ function getMovieDetails(id) {
     const meta = parsePageMeta(html);
     return new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, id, config.id),
-        name: decode(json.title) || meta.title,
+        name: tagTitle(decode(json.title) || meta.title, match(html, /<h2 class="rated-([etma])"/)),
         thumbnails: thumbs(meta.thumbnail),
         author: meta.author ?? authorFromName(json.author),
         uploadDate: meta.date,
@@ -677,10 +677,12 @@ function parseCards(html, fallbackAuthor) {
 
         const viewsStr = match(body, /([\d,]+)\s+Views/i);
         const url = isAudio ? `${BASE}/audio/listen/${id}` : `${BASE}/portal/view/${id}`;
+        // Age rating (e/t/m/a); movie cards show it, audio cards don't.
+        const rating = isAudio ? null : match(body, /rated-([etma])\b/);
 
         const video = new PlatformVideo({
             id: new PlatformID(PLATFORM, isAudio ? "audio-" + id : id, config.id),
-            name: htmlToText(title),
+            name: tagTitle(htmlToText(title), rating),
             thumbnails: thumbs(thumb),
             author: author,
             uploadDate: 0,
@@ -691,8 +693,6 @@ function parseCards(html, fallbackAuthor) {
             shareUrl: url,
             isLive: false
         });
-        // Age rating (e/t/m/a) for filtering; movie cards show it, audio cards don't.
-        const rating = isAudio ? null : match(body, /rated-([etma])\b/);
         if (rating) video._ngRating = rating;
         out.push(video);
     }
@@ -757,6 +757,12 @@ function withAvatars(videos) {
         if (pic && !v.author.thumbnail) v.author.thumbnail = pic;
     }
     return videos;
+}
+
+// "[A] Title": puts the age rating in front of movie titles (setting "showRatingTags").
+function tagTitle(name, rating) {
+    if (!rating || !isOn(settings.showRatingTags, true)) return name;
+    return `[${rating.toUpperCase()}] ${name}`;
 }
 
 function authorFromName(name) {

@@ -7,7 +7,7 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 7,
+	"version": 8,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
 	"scriptSignature": "",
@@ -37,6 +37,13 @@
 			"variable": "showAvatars",
 			"name": "Show author pictures in lists",
 			"description": "Looks up each author's profile picture for Home, search and recommendations. Turn off to load lists faster.",
+			"type": "Boolean",
+			"default": "true"
+		},
+		{
+			"variable": "showRatingTags",
+			"name": "Show rating in titles",
+			"description": "Puts the age rating in front of movie titles, like [T] or [A]. Audio isn't rated, so it has no tag.",
 			"type": "Boolean",
 			"default": "true"
 		},
