@@ -1,0 +1,27 @@
+{
+	"name": "Newgrounds",
+	"description": "Watch Newgrounds movies and listen to Newgrounds audio: featured feed, search, and user channels.",
+	"author": "",
+	"authorUrl": "",
+	"platformUrl": "https://www.newgrounds.com",
+	"sourceUrl": "https://YOUR_HOST/newgrounds/NewgroundsConfig.json",
+	"repositoryUrl": "",
+	"scriptUrl": "./NewgroundsScript.js",
+	"version": 1,
+	"iconUrl": "./NewgroundsIcon.png",
+	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
+	"scriptSignature": "",
+	"scriptPublicKey": "",
+	"packages": ["Http"],
+	"allowEval": false,
+	"allowUrls": [
+		"newgrounds.com",
+		".newgrounds.com",
+		"uploads.ungrounded.net",
+		"audio.ngfiles.com",
+		"picon.ngfiles.com",
+		"aicon.ngfiles.com",
+		"uimg.ngfiles.com"
+	],
+	"supportedClaimTypes": []
+}
