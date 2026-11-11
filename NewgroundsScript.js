@@ -73,7 +73,7 @@ class FeaturedPager extends VideoPager {
             results = filterRatings(parseCards(json.content ?? ""), allowed);
             offset += PAGE_SIZE;
         } while (results.length === 0 && offset < total && ++tries < MAX_EMPTY_PAGES);
-        super(results, offset < total, { offset, allowed });
+        super(withAvatars(results), offset < total, { offset, allowed });
     }
     nextPage() {
         return new FeaturedPager(this.context.offset, this.context.allowed);
@@ -149,7 +149,7 @@ class SearchPager extends VideoPager {
             stillMore = more;
             page++;
         } while (results.length === 0 && stillMore.length > 0 && ++tries < MAX_EMPTY_PAGES);
-        super(results, stillMore.length > 0, { query, kinds: stillMore, page, allowed });
+        super(withAvatars(results), stillMore.length > 0, { query, kinds: stillMore, page, allowed });
     }
     nextPage() {
         const c = this.context;
@@ -199,10 +199,14 @@ source.isContentDetailsUrl = function (url) {
 
 source.getContentDetails = function (url) {
     const v = url.match(REGEX_VIDEO_URL);
-    if (v) return getMovieDetails(v[1]);
     const a = url.match(REGEX_AUDIO_URL);
-    if (a) return getAudioDetails(a[1]);
-    throw new ScriptException("Unsupported Newgrounds URL: " + url);
+    const details = v ? getMovieDetails(v[1]) : a ? getAudioDetails(a[1]) : null;
+    if (!details) throw new ScriptException("Unsupported Newgrounds URL: " + url);
+    // Grayjay asks the details object itself for the "Recommended" tab.
+    details.getContentRecommendations = function () {
+        return source.getContentRecommendations(url);
+    };
+    return details;
 };
 
 function getMovieDetails(id) {
@@ -363,7 +367,7 @@ source.getContentRecommendations = function (url, initialData) {
         const j = Math.floor(Math.random() * (i + 1));
         [pool[i], pool[j]] = [pool[j], pool[i]];
     }
-    return new VideoPager(pool.slice(0, RECOMMEND_COUNT), false);
+    return new VideoPager(withAvatars(pool.slice(0, RECOMMEND_COUNT)), false);
 };
 
 // ---------------------------------------------------------------- comments (reviews)
@@ -529,7 +533,7 @@ class FavoritesPager extends VideoPager {
         const all = (kind === "audio" ? parseFavoriteAudio(html) : parseCards(html))
             .filter(v => !seen[v.url] && (seen[v.url] = true));
         const items = filterRatings(all, allowedRatings());
-        super(items, all.length > 0 && page < MAX_LIST_PAGES, { user, kind, page, seen });
+        super(withAvatars(items), all.length > 0 && page < MAX_LIST_PAGES, { user, kind, page, seen });
     }
     nextPage() {
         const c = this.context;
@@ -625,7 +629,7 @@ class ChannelContentPager extends VideoPager {
             else ctx = null;
         } while (results.length === 0 && ctx !== null && ++tries < MAX_EMPTY_PAGES);
 
-        super(results, ctx !== null, ctx ?? {});
+        super(withAvatars(results), ctx !== null, ctx ?? {});
     }
     nextPage() {
         const c = this.context;
@@ -722,6 +726,37 @@ function getJson(url, allowFail) {
         if (allowFail) return null;
         throw new ScriptException("Unexpected response from Newgrounds: " + url);
     }
+}
+
+// List pages don't include author pictures, so look them up from each author's
+// profile page (og:image), all at once, and remember them for the session.
+const avatarCache = {};
+
+function withAvatars(videos) {
+    if (!isOn(settings.showAvatars, true)) return videos;
+    const need = [];
+    for (const v of videos) {
+        const slug = v.author && !v.author.thumbnail && v.author.id ? v.author.id.value : null;
+        if (slug && slug !== "unknown" && !(slug in avatarCache) && need.indexOf(slug) < 0) need.push(slug);
+    }
+    if (need.length > 0) {
+        let responses = null;
+        try {
+            let batch = http.batch();
+            for (const slug of need) batch = batch.GET(`https://${slug}.newgrounds.com/`, {}, loggedIn());
+            responses = batch.execute();
+        } catch (e) { responses = null; }
+        need.forEach((slug, i) => {
+            const r = responses ? responses[i] : null;
+            // Only remember successful lookups, so a failed one is retried next time.
+            if (r && r.isOk) avatarCache[slug] = decode(metaProp(r.body, "og:image")) || "";
+        });
+    }
+    for (const v of videos) {
+        const pic = v.author && v.author.id ? avatarCache[v.author.id.value] : "";
+        if (pic && !v.author.thumbnail) v.author.thumbnail = pic;
+    }
+    return videos;
 }
 
 function authorFromName(name) {

@@ -59,6 +59,10 @@ In Grayjay, open the Newgrounds source's settings to choose which age ratings to
 | Show M (Mature) | on |
 | Show A (Adults only) | off; only works when logged in with adult content allowed on your Newgrounds account |
 
+**Seeing adult (A) results in search:** Newgrounds only sends A-rated results to accounts that allow them, so turning on the plugin setting isn't enough on its own. On newgrounds.com, logged in with the same account, open any search page and tick **A** next to "Ratings" (your account must have an 18+ birthday). The plugin then shows them.
+
+**Author pictures:** Newgrounds list pages don't include profile pictures, so the plugin looks them up from each author's page. Turn off "Show author pictures in lists" in the plugin settings if lists load slowly.
+
 These apply to search, channels, favorites and recommendations. Home never shows A content, whatever the settings. Newgrounds doesn't age-rate audio, so audio always shows. Opening a link to a specific movie always works.
 
 Posting reviews or liking from Grayjay isn't possible: Grayjay doesn't let plugins send comments or likes to a site.
