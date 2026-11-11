@@ -7,7 +7,7 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 4,
+	"version": 5,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
 	"scriptSignature": "",
@@ -23,5 +23,11 @@
 		"aicon.ngfiles.com",
 		"uimg.ngfiles.com"
 	],
-	"supportedClaimTypes": []
+	"supportedClaimTypes": [],
+	"authentication": {
+		"loginUrl": "https://www.newgrounds.com/login",
+		"cookiesToFind": [
+			"ng_session"
+		]
+	}
 }

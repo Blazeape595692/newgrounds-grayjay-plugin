@@ -1,7 +1,8 @@
 // Newgrounds source plugin for Grayjay
 // Supports: featured movies home feed, mixed movie + audio search, user search,
 // movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio),
-// comments (Newgrounds reviews), recommendations (random featured movies / audio).
+// comments (Newgrounds reviews), recommendations (random featured movies / audio),
+// login: adult content, followed-user import, favorites as playlists.
 
 const PLATFORM = "Newgrounds";
 const BASE = "https://www.newgrounds.com";
@@ -11,6 +12,7 @@ const PAGE_SIZE = 20;
 const REGEX_VIDEO_URL = /^https?:\/\/(?:www\.)?newgrounds\.com\/portal\/view\/(\d+)/i;
 const REGEX_AUDIO_URL = /^https?:\/\/(?:www\.)?newgrounds\.com\/audio\/listen\/(\d+)/i;
 const REGEX_CHANNEL_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/?/i;
+const REGEX_FAVORITES_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/favorites\/(movies|audio)\/?(?:[?#].*)?$/i;
 
 let config = {};
 
@@ -74,7 +76,7 @@ class SearchPager extends VideoPager {
         const lists = [];
         const stillMore = [];
         for (const kind of kinds) {
-            const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, false);
+            const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, loggedIn());
             if (!resp.isOk) {
                 if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
                 continue;
@@ -149,7 +151,7 @@ function getMovieDetails(id) {
     const pageUrl = `${BASE}/portal/view/${id}`;
     const html = getHtml(pageUrl);
 
-    const resp = http.GET(`${BASE}/portal/video/${id}`, XHR, false);
+    const resp = http.GET(`${BASE}/portal/video/${id}`, XHR, loggedIn());
     let json = null;
     try { json = JSON.parse(resp.body); } catch (e) { }
     if (!resp.isOk || !json || !json.sources) {
@@ -345,7 +347,7 @@ class ReviewPager extends CommentPager {
         const stop = Math.min(c.last, c.next + REVIEW_PAGES_PER_BATCH - 1);
         let page = c.next;
         for (; page <= stop; page++) {
-            const resp = http.GET(`${BASE}/reviews/portal/${c.id}/${c.type}/date/${page}`, XHR, false);
+            const resp = http.GET(`${BASE}/reviews/portal/${c.id}/${c.type}/date/${page}`, XHR, loggedIn());
             if (!resp.isOk) break;
             results = results.concat(parseReviews(resp.body, c.pageUrl));
         }
@@ -390,10 +392,122 @@ function parseReviews(html, contextUrl) {
     return out;
 }
 
+// ---------------------------------------------------------------- account (needs login)
+
+// Max pages to walk when listing follows; a safety stop, not a real limit for most users.
+const MAX_LIST_PAGES = 100;
+
+// Username of the logged-in account, read from the user icon in the site header.
+function currentUsername() {
+    if (!loggedIn()) throw new ScriptException("Log in to Newgrounds first (plugin settings → Login).");
+    const html = getHtml(`${BASE}/social`);
+    const user = match(html, /id="toggle-user-menu"\s+href="https:\/\/([a-z0-9_-]+)\.newgrounds\.com"/i) ??
+        match(html, /class="user-icon"[^>]*href="https:\/\/([a-z0-9_-]+)\.newgrounds\.com"/i);
+    if (!user) throw new ScriptException("Couldn't find your Newgrounds username. Try logging in again.");
+    return user.toLowerCase();
+}
+
+// Fetches one page of a user's favorites list (following, movies or audio) as HTML.
+function getFavoritesPage(user, kind, page) {
+    const json = getJson(`https://${user}.newgrounds.com/favorites/${kind}?page=${page}&isAjaxRequest=1`, true);
+    return (json && json.component) || "";
+}
+
+// "Import subscriptions": the Newgrounds users this account follows.
+source.getUserSubscriptions = function () {
+    const user = currentUsername();
+    const urls = [];
+    const seen = {};
+    for (let page = 1; page <= MAX_LIST_PAGES; page++) {
+        const html = getFavoritesPage(user, "following", page);
+        let added = 0;
+        const re = /<h4>\s*<a href="(https:\/\/([a-z0-9_-]+)\.newgrounds\.com)"/gi;
+        let m;
+        while ((m = re.exec(html)) !== null) {
+            const name = m[2].toLowerCase();
+            if (seen[name]) continue;
+            seen[name] = true;
+            urls.push(`https://${name}.newgrounds.com`);
+            added++;
+        }
+        if (added === 0) break;
+    }
+    return urls;
+};
+
+// The account's favorite movies and favorite audio, shown as two playlists.
+source.getUserPlaylists = function () {
+    const user = currentUsername();
+    return [`https://${user}.newgrounds.com/favorites/movies`, `https://${user}.newgrounds.com/favorites/audio`];
+};
+
+source.isPlaylistUrl = function (url) {
+    return REGEX_FAVORITES_URL.test(url);
+};
+
+// Works for any user's public favorites, not just the logged-in account.
+source.getPlaylist = function (url) {
+    const m = url.match(REGEX_FAVORITES_URL);
+    if (!m) throw new ScriptException("Not a Newgrounds favorites URL: " + url);
+    const user = m[1].toLowerCase();
+    const kind = m[2].toLowerCase();
+    const contents = new FavoritesPager(user, kind, 1, {});
+    const first = contents.results[0];
+    return new PlatformPlaylistDetails({
+        id: new PlatformID(PLATFORM, `fav-${kind}-${user}`, config.id),
+        name: kind === "movies" ? `${user}'s favorite movies` : `${user}'s favorite audio`,
+        author: new PlatformAuthorLink(new PlatformID(PLATFORM, user, config.id), user, `https://${user}.newgrounds.com`, ""),
+        url: `https://${user}.newgrounds.com/favorites/${kind}`,
+        thumbnail: first && first.thumbnails && first.thumbnails.sources && first.thumbnails.sources[0]
+            ? first.thumbnails.sources[0].url : null,
+        videoCount: -1,
+        contents: contents
+    });
+};
+
+class FavoritesPager extends VideoPager {
+    constructor(user, kind, page, seen) {
+        const html = getFavoritesPage(user, kind, page);
+        const items = (kind === "audio" ? parseFavoriteAudio(html) : parseCards(html))
+            .filter(v => !seen[v.url] && (seen[v.url] = true));
+        super(items, items.length > 0 && page < MAX_LIST_PAGES, { user, kind, page, seen });
+    }
+    nextPage() {
+        const c = this.context;
+        return new FavoritesPager(c.user, c.kind, c.page + 1, c.seen);
+    }
+}
+
+// Favorite-audio cards use a different layout from the rest of the site.
+function parseFavoriteAudio(html) {
+    const out = [];
+    const re = /class="item-audiosubmission[^"]*">\s*<a href="https:\/\/www\.newgrounds\.com\/audio\/listen\/(\d+)"[^>]*title="([^"]*)"([\s\S]*?)<\/a>\s*<a class="item-author" href="(https:\/\/[a-z0-9_-]+\.newgrounds\.com)"[\s\S]*?<strong>([^<]+)<\/strong>/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const id = m[1];
+        const name = decode(m[5]);
+        const url = `${BASE}/audio/listen/${id}`;
+        out.push(new PlatformVideo({
+            id: new PlatformID(PLATFORM, "audio-" + id, config.id),
+            name: htmlToText(decode(m[2])),
+            thumbnails: thumbs(match(m[3], /<img[^>]*src="([^"]+)"/)),
+            author: new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, m[4], ""),
+            uploadDate: 0,
+            datetime: 0,
+            duration: 0,
+            viewCount: 0,
+            url: url,
+            shareUrl: url,
+            isLive: false
+        }));
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------- channels
 
 source.isChannelUrl = function (url) {
-    return REGEX_CHANNEL_URL.test(url);
+    return REGEX_CHANNEL_URL.test(url) && !REGEX_FAVORITES_URL.test(url);
 };
 
 source.getChannel = function (url) {
@@ -515,14 +629,21 @@ function parseCards(html, fallbackAuthor) {
 
 // ---------------------------------------------------------------- helpers
 
+// True once the user has logged in to Newgrounds through Grayjay. Requests then
+// carry the login, which unlocks adult-rated (A) submissions.
+function loggedIn() {
+    try { return typeof bridge !== "undefined" && !!bridge.isLoggedIn(); }
+    catch (e) { return false; }
+}
+
 function getHtml(url) {
-    const resp = http.GET(url, {}, false);
+    const resp = http.GET(url, {}, loggedIn());
     if (!resp.isOk) throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);
     return resp.body;
 }
 
 function getJson(url, allowFail) {
-    const resp = http.GET(url, XHR, false);
+    const resp = http.GET(url, XHR, loggedIn());
     if (!resp.isOk) {
         if (allowFail) return null;
         throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);

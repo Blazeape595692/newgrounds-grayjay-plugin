@@ -14,7 +14,8 @@ Files:
 - **Recommendations**: 20 random featured movies under each movie, and 20 random featured audio tracks under each audio track (new picks every time)
 - **Comments**: Newgrounds reviews show as comments, with the reviewer, date and star score (newest first)
 - **Channels**: `https://USERNAME.newgrounds.com`: profile, fan count, and all of the user's movies, then their audio
-- **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`
+- **Favorites**: `USERNAME.newgrounds.com/favorites/movies` and `/favorites/audio` open as playlists
+- **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`, `USERNAME.newgrounds.com/favorites/movies|audio`
 
 ## Install
 Scan this QR code with your phone camera, or in Grayjay under Sources → Add:
@@ -37,8 +38,18 @@ For development, the Grayjay dev portal (enable developer mode, then open `http:
 
 The plugin is unsigned, so Grayjay will show an "unsigned plugin" warning. That's normal for self-hosted plugins.
 
+## Logging in
+In Grayjay, open the Newgrounds source and tap **Login**, then sign in to Newgrounds. Logging in adds:
+- **Adult-rated (A) content**: plays when your Newgrounds account is set to show adult content.
+- **Import subscriptions**: Grayjay's import brings in the Newgrounds users you follow.
+- **Playlists**: your favorite movies and favorite audio show up as two playlists.
+
+Grayjay keeps the login cookie in the app; the plugin never sees your password.
+
+Posting reviews or liking from Grayjay isn't possible: Grayjay doesn't let plugins send comments or likes to a site.
+
 ## Limitations
 - Reviews have no replies or likes, since Newgrounds doesn't show them publicly.
-- Adult-rated (A) content needs a logged-in session, so it will fail to play.
+- Adult-rated (A) content only plays when logged in.
 - Old Flash/Ruffle submissions with no video stream won't play.
 - Newgrounds doesn't expose duration in its listings, so Grayjay fills it in once playback starts.
