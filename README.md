@@ -4,6 +4,7 @@ Files:
 - `NewgroundsConfig.json`: the plugin config (this is the URL you install)
 - `NewgroundsScript.js`: the source script
 - `NewgroundsIcon.png`: the icon
+- `NewgroundsQR.png`: QR code for installing in Grayjay
 
 ## What it does
 - **Home**: Newgrounds featured movies, with infinite scroll
@@ -14,6 +15,10 @@ Files:
 - **Supported URLs**: `newgrounds.com/portal/view/ID`, `newgrounds.com/audio/listen/ID`, `USERNAME.newgrounds.com`
 
 ## Install
+Scan this QR code with your phone camera, or in Grayjay under Sources → Add:
+
+<img src="NewgroundsQR.png" alt="QR code to install the Newgrounds plugin in Grayjay" width="250">
+
 The plugin is hosted on GitHub Pages. Config URL:
 
 ```
@@ -21,7 +26,7 @@ https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json
 ```
 
 In Grayjay, add a source using that URL: either open
-`grayjay://plugin/https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json` on your phone, or turn the URL into a QR code and scan it from Sources → Add.
+`grayjay://plugin/https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json` on your phone, or paste the config URL in Sources → Add.
 
 ### Hosting it yourself
 Host the three files together in one folder on any static HTTPS host (GitHub Pages, a GitLab/Codeberg raw URL, etc.), then change `sourceUrl` in `NewgroundsConfig.json` to the config's real public URL.
