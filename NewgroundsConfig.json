@@ -7,7 +7,7 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 5,
+	"version": 6,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
 	"scriptSignature": "",
@@ -29,5 +29,42 @@
 		"cookiesToFind": [
 			"ng_session"
 		]
-	}
+	},
+	"settings": [
+		{
+			"variable": "ratingsHeader",
+			"name": "Content ratings",
+			"description": "Which age ratings to show. Applies to movies and games; Newgrounds doesn't rate audio. Adult (A) content is never shown on Home.",
+			"type": "Header"
+		},
+		{
+			"variable": "showRatedE",
+			"name": "Show E (Everyone)",
+			"description": "Suitable for all ages.",
+			"type": "Boolean",
+			"default": "true"
+		},
+		{
+			"variable": "showRatedT",
+			"name": "Show T (Teen)",
+			"description": "Suitable for ages 13 and up.",
+			"type": "Boolean",
+			"default": "true"
+		},
+		{
+			"variable": "showRatedM",
+			"name": "Show M (Mature)",
+			"description": "Suitable for ages 17 and up.",
+			"type": "Boolean",
+			"default": "true"
+		},
+		{
+			"variable": "showRatedA",
+			"name": "Show A (Adults only)",
+			"description": "Adults only. Needs you to be logged in, with adult content turned on in your Newgrounds account settings.",
+			"type": "Boolean",
+			"default": "false",
+			"warningDialog": "This shows adults-only content in search, channels, favorites and recommendations (never on Home).\n\nIt only works when you're logged in and your Newgrounds account allows adult content."
+		}
+	]
 }

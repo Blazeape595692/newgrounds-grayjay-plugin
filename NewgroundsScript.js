@@ -2,7 +2,8 @@
 // Supports: featured movies home feed, mixed movie + audio search, user search,
 // movie playback (MP4, all qualities), audio playback (MP3), user channels (movies + audio),
 // comments (Newgrounds reviews), recommendations (random featured movies / audio),
-// login: adult content, followed-user import, favorites as playlists.
+// login: adult content, followed-user import, favorites as playlists, search rating filter;
+// settings: which age ratings (E/T/M/A) to show. Home never shows A.
 
 const PLATFORM = "Newgrounds";
 const BASE = "https://www.newgrounds.com";
@@ -14,31 +15,68 @@ const REGEX_AUDIO_URL = /^https?:\/\/(?:www\.)?newgrounds\.com\/audio\/listen\/(
 const REGEX_CHANNEL_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/?/i;
 const REGEX_FAVORITES_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/favorites\/(movies|audio)\/?(?:[?#].*)?$/i;
 
+// When a page comes back empty after rating filtering, try up to this many more pages.
+const MAX_EMPTY_PAGES = 5;
+
 let config = {};
+let settings = {};
 
 // ---------------------------------------------------------------- lifecycle
 
-source.enable = function (conf, settings, savedState) {
+source.enable = function (conf, sets, savedState) {
     config = conf ?? {};
+    settings = sets ?? {};
 };
 
 source.disable = function () { };
 
+// ---------------------------------------------------------------- content ratings
+
+// Newgrounds rates movies and games E / T / M / A. Audio has no rating and always shows.
+function isOn(value, fallback) {
+    if (value === undefined || value === null || value === "") return fallback;
+    return value === true || value === "true";
+}
+
+// Ratings to show, from the plugin settings. A needs a login.
+function allowedRatings() {
+    const allowed = {
+        e: isOn(settings.showRatedE, true),
+        t: isOn(settings.showRatedT, true),
+        m: isOn(settings.showRatedM, true),
+        a: isOn(settings.showRatedA, false) && loggedIn()
+    };
+    return allowed;
+}
+
+// Drops items whose rating isn't allowed. Items with no rating (audio) are kept.
+function filterRatings(items, allowed) {
+    return items.filter(v => !v._ngRating || allowed[v._ngRating]);
+}
+
 // ---------------------------------------------------------------- home
 
+// Home never shows adult (A) content, even when logged in with A turned on.
 source.getHome = function () {
-    return new FeaturedPager(0);
+    const allowed = Object.assign(allowedRatings(), { a: false });
+    return new FeaturedPager(0, allowed);
 };
 
 class FeaturedPager extends VideoPager {
-    constructor(offset) {
-        const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`);
-        const results = parseCards(json.content ?? "");
-        const next = offset + PAGE_SIZE;
-        super(results, results.length > 0 && next < (json.total ?? 0), { offset: next });
+    constructor(offset, allowed) {
+        let results = [];
+        let total = 0;
+        let tries = 0;
+        do {
+            const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`);
+            total = json.total ?? 0;
+            results = filterRatings(parseCards(json.content ?? ""), allowed);
+            offset += PAGE_SIZE;
+        } while (results.length === 0 && offset < total && ++tries < MAX_EMPTY_PAGES);
+        super(results, offset < total, { offset, allowed });
     }
     nextPage() {
-        return new FeaturedPager(this.context.offset);
+        return new FeaturedPager(this.context.offset, this.context.allowed);
     }
 }
 
@@ -49,17 +87,23 @@ source.searchSuggestions = function (query) {
 };
 
 source.getSearchCapabilities = function () {
-    return {
-        types: [Type.Feed.Mixed],
-        sorts: [],
-        filters: [
-            new FilterGroup("Content", [
-                new FilterCapability("All", "all", "all"),
-                new FilterCapability("Movies", "movies", "movies"),
-                new FilterCapability("Audio", "audio", "audio")
-            ], false, "content")
-        ]
-    };
+    const filters = [
+        new FilterGroup("Content", [
+            new FilterCapability("All", "all", "all"),
+            new FilterCapability("Movies", "movies", "movies"),
+            new FilterCapability("Audio", "audio", "audio")
+        ], false, "content")
+    ];
+    // The rating filter only shows when logged in. With nothing picked, the settings apply.
+    if (loggedIn()) {
+        filters.push(new FilterGroup("Rating", [
+            new FilterCapability("E (Everyone)", "e", "e"),
+            new FilterCapability("T (Teen)", "t", "t"),
+            new FilterCapability("M (Mature)", "m", "m"),
+            new FilterCapability("A (Adults only)", "a", "a")
+        ], true, "rating"));
+    }
+    return { types: [Type.Feed.Mixed], sorts: [], filters: filters };
 };
 
 // Searches movies and audio together by default; the "Content" filter narrows it to one.
@@ -68,34 +112,48 @@ source.search = function (query, type, order, filters) {
     if (filters && filters.content && filters.content.length > 0)
         kind = filters.content[0];
     const kinds = kind === "movies" || kind === "audio" ? [kind] : ["movies", "audio"];
-    return new SearchPager(query, kinds, 1);
+
+    let allowed = allowedRatings();
+    if (loggedIn() && filters && filters.rating && filters.rating.length > 0) {
+        allowed = { e: false, t: false, m: false, a: false };
+        for (const r of filters.rating) if (r in allowed) allowed[r] = true;
+    }
+    return new SearchPager(query, kinds, 1, allowed);
 };
 
 class SearchPager extends VideoPager {
-    constructor(query, kinds, page) {
-        const lists = [];
-        const stillMore = [];
-        for (const kind of kinds) {
-            const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, loggedIn());
-            if (!resp.isOk) {
-                if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
-                continue;
+    constructor(query, kinds, page, allowed) {
+        let results = [];
+        let stillMore = kinds;
+        let tries = 0;
+        do {
+            const lists = [];
+            const more = [];
+            for (const kind of stillMore) {
+                const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, loggedIn());
+                if (!resp.isOk) {
+                    if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
+                    continue;
+                }
+                const html = resp.body;
+                const items = parseCards(html);
+                lists.push(filterRatings(items, allowed));
+                if (items.length > 0 && (html.includes(`page=${page + 1}"`) || html.includes(`page=${page + 1}&`)))
+                    more.push(kind);
             }
-            const html = resp.body;
-            const items = parseCards(html);
-            lists.push(items);
-            if (items.length > 0 && (html.includes(`page=${page + 1}"`) || html.includes(`page=${page + 1}&`)))
-                stillMore.push(kind);
-        }
-        // Alternate movie, audio, movie, audio... so both show near the top.
-        const results = [];
-        for (let i = 0; lists.some(l => i < l.length); i++)
-            for (const l of lists)
-                if (i < l.length) results.push(l[i]);
-        super(results, stillMore.length > 0, { query, kinds: stillMore, page });
+            // Alternate movie, audio, movie, audio... so both show near the top.
+            results = [];
+            for (let i = 0; lists.some(l => i < l.length); i++)
+                for (const l of lists)
+                    if (i < l.length) results.push(l[i]);
+            stillMore = more;
+            page++;
+        } while (results.length === 0 && stillMore.length > 0 && ++tries < MAX_EMPTY_PAGES);
+        super(results, stillMore.length > 0, { query, kinds: stillMore, page, allowed });
     }
     nextPage() {
-        return new SearchPager(this.context.query, this.context.kinds, this.context.page + 1);
+        const c = this.context;
+        return new SearchPager(c.query, c.kinds, c.page, c.allowed);
     }
 }
 
@@ -296,7 +354,7 @@ source.getContentRecommendations = function (url, initialData) {
     let pool = [];
     for (const offset of Object.keys(offsets)) {
         const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
-        if (json && json.content) pool = pool.concat(parseCards(json.content));
+        if (json && json.content) pool = pool.concat(filterRatings(parseCards(json.content), allowedRatings()));
     }
 
     const seen = { [currentId]: true };
@@ -468,9 +526,10 @@ source.getPlaylist = function (url) {
 class FavoritesPager extends VideoPager {
     constructor(user, kind, page, seen) {
         const html = getFavoritesPage(user, kind, page);
-        const items = (kind === "audio" ? parseFavoriteAudio(html) : parseCards(html))
+        const all = (kind === "audio" ? parseFavoriteAudio(html) : parseCards(html))
             .filter(v => !seen[v.url] && (seen[v.url] = true));
-        super(items, items.length > 0 && page < MAX_LIST_PAGES, { user, kind, page, seen });
+        const items = filterRatings(all, allowedRatings());
+        super(items, all.length > 0 && page < MAX_LIST_PAGES, { user, kind, page, seen });
     }
     nextPage() {
         const c = this.context;
@@ -540,32 +599,37 @@ source.getChannelContents = function (url, type, order, filters) {
     const user = channelName(url);
     const author = new PlatformAuthorLink(
         new PlatformID(PLATFORM, user, config.id), user, `https://${user}.newgrounds.com`, "");
-    return new ChannelContentPager(user, author, "movies", 1);
+    return new ChannelContentPager(user, author, "movies", 1, allowedRatings());
 };
 
 class ChannelContentPager extends VideoPager {
-    constructor(user, author, kind, page) {
-        const json = getJson(`https://${user}.newgrounds.com/${kind}?page=${page}`, true);
+    constructor(user, author, kind, page, allowed) {
         let results = [];
-        if (json && json.items) {
-            const years = Object.keys(json.items).sort((a, b) => parseInt(b) - parseInt(a));
-            for (const y of years)
-                for (const cardHtml of json.items[y])
-                    results = results.concat(parseCards(cardHtml, author));
-        }
-        results.sort((a, b) => parseInt(b.id.value.replace(/\D/g, "")) - parseInt(a.id.value.replace(/\D/g, "")));
+        let ctx = { user, author, kind, page, allowed };
+        let tries = 0;
+        do {
+            const json = getJson(`https://${user}.newgrounds.com/${ctx.kind}?page=${ctx.page}`, true);
+            results = [];
+            if (json && json.items) {
+                const years = Object.keys(json.items).sort((a, b) => parseInt(b) - parseInt(a));
+                for (const y of years)
+                    for (const cardHtml of json.items[y])
+                        results = results.concat(parseCards(cardHtml, author));
+            }
+            results = filterRatings(results, allowed);
+            results.sort((a, b) => parseInt(b.id.value.replace(/\D/g, "")) - parseInt(a.id.value.replace(/\D/g, "")));
 
-        const moreInKind = !!(json && json.load_more && String(json.load_more).trim());
-        let ctx;
-        if (moreInKind) ctx = { user, author, kind, page: page + 1 };
-        else if (kind === "movies") ctx = { user, author, kind: "audio", page: 1 };
-        else ctx = null;
+            const moreInKind = !!(json && json.load_more && String(json.load_more).trim());
+            if (moreInKind) ctx = { user, author, kind: ctx.kind, page: ctx.page + 1, allowed };
+            else if (ctx.kind === "movies") ctx = { user, author, kind: "audio", page: 1, allowed };
+            else ctx = null;
+        } while (results.length === 0 && ctx !== null && ++tries < MAX_EMPTY_PAGES);
 
-        super(results, ctx !== null, ctx);
+        super(results, ctx !== null, ctx ?? {});
     }
     nextPage() {
         const c = this.context;
-        return new ChannelContentPager(c.user, c.author, c.kind, c.page);
+        return new ChannelContentPager(c.user, c.author, c.kind, c.page, c.allowed);
     }
 }
 
@@ -610,7 +674,7 @@ function parseCards(html, fallbackAuthor) {
         const viewsStr = match(body, /([\d,]+)\s+Views/i);
         const url = isAudio ? `${BASE}/audio/listen/${id}` : `${BASE}/portal/view/${id}`;
 
-        out.push(new PlatformVideo({
+        const video = new PlatformVideo({
             id: new PlatformID(PLATFORM, isAudio ? "audio-" + id : id, config.id),
             name: htmlToText(title),
             thumbnails: thumbs(thumb),
@@ -622,7 +686,11 @@ function parseCards(html, fallbackAuthor) {
             url: url,
             shareUrl: url,
             isLive: false
-        }));
+        });
+        // Age rating (e/t/m/a) for filtering; movie cards show it, audio cards don't.
+        const rating = isAudio ? null : match(body, /rated-([etma])\b/);
+        if (rating) video._ngRating = rating;
+        out.push(video);
     }
     return out;
 }
