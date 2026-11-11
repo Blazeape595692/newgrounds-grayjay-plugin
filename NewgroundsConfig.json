@@ -7,7 +7,7 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 9,
+	"version": 10,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
 	"scriptSignature": "",
@@ -77,10 +77,10 @@
 		{
 			"variable": "showRatedA",
 			"name": "Show A (Adults only)",
-			"description": "Adults only. Needs you to be logged in, with adult content turned on in your Newgrounds account settings.",
+			"description": "Adults only. Needs you to be logged in, with adult content turned on in your Newgrounds account settings. In countries with age-verification laws, such as the UK, Newgrounds blocks adult content, so you'll need a VPN set to another country (with Grayjay going through it).",
 			"type": "Boolean",
 			"default": "false",
-			"warningDialog": "This shows adults-only content in search, channels, favorites and recommendations (never on Home).\n\nIt only works when you're logged in and your Newgrounds account allows adult content."
+			"warningDialog": "This shows adults-only content in search, channels, favorites and recommendations (never on Home).\n\nIt only works when you're logged in and your Newgrounds account allows adult content.\n\nIn countries with age-verification laws, such as the UK, Newgrounds blocks adult content, so you'll need a VPN set to another country (with Grayjay going through it). Otherwise adult videos won't play and their thumbnails stay blank."
 		}
 	]
 }

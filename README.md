@@ -50,6 +50,8 @@ It also adds a **Rating** filter to search. Picking ratings there overrides the 
 Grayjay keeps the login cookie in the app; the plugin never sees your password.
 
 ## Content rating settings
+
+> **Adult content and regional laws:** in countries with age-verification laws, such as the UK, Newgrounds blocks adult (A) content: videos won't play and thumbnails stay blank. If that applies to you, you'll need a VPN connected to another country, with Grayjay going through it (check it isn't excluded by split tunnelling). Make sure that's allowed where you live.
 In Grayjay, open the Newgrounds source's settings to choose which age ratings to show:
 
 | Setting | Default |
@@ -71,6 +73,6 @@ Posting reviews or liking from Grayjay isn't possible: Grayjay doesn't let plugi
 
 ## Limitations
 - Reviews have no replies or likes, since Newgrounds doesn't show them publicly.
-- Adult-rated (A) content only plays when logged in.
+- Adult-rated (A) content only plays when logged in, and needs a VPN in countries with age-verification laws, such as the UK.
 - Old Flash/Ruffle submissions with no video stream won't play.
 - Newgrounds doesn't expose duration in its listings, so Grayjay fills it in once playback starts.

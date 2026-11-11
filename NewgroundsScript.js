@@ -223,7 +223,7 @@ function getMovieDetails(id) {
     if (!resp.isOk || !json || !json.sources) {
         const err = json && json.errors ? json.errors.join(" ") : `HTTP ${resp.code}`;
         if (pageBlocked)
-            throw new ScriptException(`Newgrounds blocked this movie (${pageResp.code}). Adult-rated movies need you logged in, and may be blocked in your region.`);
+            throw new ScriptException(`Newgrounds blocked this movie (${pageResp.code}). Adult-rated movies need you logged in. In countries with age-verification laws, such as the UK, you'll also need a VPN set to another country.`);
         throw new ScriptException("Could not load this movie (it may be a Flash/Ruffle submission): " + err);
     }
 
