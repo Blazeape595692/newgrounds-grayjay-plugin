@@ -54,6 +54,8 @@ After every change to `NewgroundsScript.js`, re-sign it before committing:
 
 It uses the key at `~/.config/newgrounds-grayjay-plugin/signing-key.pem` by default, or a path you pass. Keep that key backed up: if it's lost, updates signed with a new key make Grayjay warn that the key changed.
 
+**Updating from an unsigned version (before version 12) on Grayjay Desktop:** Desktop refuses the update with "Plugin author public key changed", because the installed copy had no key. Remove the Newgrounds source in Desktop and add it again from the config URL. The phone app updates normally.
+
 ## Logging in
 In Grayjay, open the Newgrounds source and tap **Login**, then sign in to Newgrounds. Logging in adds:
 - **Adult-rated (A) content**: plays when your Newgrounds account is set to show adult content.
