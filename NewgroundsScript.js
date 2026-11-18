@@ -205,8 +205,10 @@ source.getContentDetails = function (url) {
     // Grayjay asks the details object itself for the "Recommended" tab.
     const user = details.author && details.author.url && REGEX_CHANNEL_URL.test(details.author.url)
         ? channelName(details.author.url) : null;
+    const info = { user, name: details.author ? details.author.name : null, tags: details._ngTags || [] };
+    delete details._ngTags;
     details.getContentRecommendations = function () {
-        return source.getContentRecommendations(url, { user, name: details.author.name });
+        return source.getContentRecommendations(url, info);
     };
     return details;
 };
@@ -251,7 +253,7 @@ function getMovieDetails(id) {
     const meta = parsePageMeta(html);
     // A blocked page only happens for adult-rated movies.
     const rating = match(html, /<h2 class="rated-([etma])"/) || (pageBlocked ? "a" : null);
-    return new PlatformVideoDetails({
+    const details = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, id, config.id),
         name: tagTitle(decode(json.title) || meta.title, rating),
         thumbnails: thumbs(meta.thumbnail),
@@ -267,6 +269,8 @@ function getMovieDetails(id) {
         video: new VideoSourceDescriptor(sources),
         rating: meta.rating
     });
+    details._ngTags = parseTags(html);
+    return details;
 }
 
 function getAudioDetails(id) {
@@ -287,7 +291,7 @@ function getAudioDetails(id) {
         language: "Unknown"
     });
 
-    return new PlatformVideoDetails({
+    const details = new PlatformVideoDetails({
         id: new PlatformID(PLATFORM, "audio-" + id, config.id),
         name: meta.title,
         thumbnails: thumbs(meta.thumbnail),
@@ -303,6 +307,8 @@ function getAudioDetails(id) {
         video: new UnMuxVideoSourceDescriptor([], [audio]),
         rating: meta.rating
     });
+    details._ngTags = parseTags(html);
+    return details;
 }
 
 function parsePageMeta(html) {
@@ -339,12 +345,14 @@ function parsePageMeta(html) {
 // ---------------------------------------------------------------- recommendations
 
 // "Recommended" under a submission: 5 random picks from the same creator's
-// channel (their movies under a movie, their audio under audio), then random
-// picks from the featured feed of the same kind to make 20 in total.
-const RECOMMEND_COUNT = 20;
-const RECOMMEND_FROM_CHANNEL = 5;
+// channel, 5 from other creators that share the submission's tags, and 5 from
+// the featured feed, all mixed together. Movies under a movie, audio under
+// audio. If one source comes up short, featured picks fill the gap.
+const RECOMMEND_EACH = 5;
+const RECOMMEND_COUNT = RECOMMEND_EACH * 3;
 const RECOMMEND_PAGES = 3;          // random featured pages to pick from
 const RECOMMEND_CHANNEL_PAGES = 3;  // channel pages to pick from
+const RECOMMEND_TAGS = 3;           // tags to search
 const FEATURED_FEEDS = {
     movies: { path: "movies/featured", pageSize: 20, total: 0 },
     audio: { path: "audio/featured", pageSize: 30, total: 0 }
@@ -358,17 +366,44 @@ source.getContentRecommendations = function (url, initialData) {
     const currentId = v ? v[1] : "audio-" + a[1];
     const allowed = allowedRatings();
     const seen = { [currentId]: true };
-    const fresh = list => list.filter(p => !seen[p.id.value] && (seen[p.id.value] = true));
+    const take = (list, n) => {
+        const out = [];
+        for (const p of shuffle(list)) {
+            if (out.length >= n) break;
+            if (seen[p.id.value]) continue;
+            seen[p.id.value] = true;
+            out.push(p);
+        }
+        return out;
+    };
 
-    // 1. Up to 5 from the creator's channel.
+    let info = initialData && initialData.user !== undefined ? initialData : null;
+    if (!info) {
+        try { info = submissionInfo(v ? v[1] : null, a ? a[1] : null); }
+        catch (e) { info = { user: null, name: null, tags: [] }; }
+    }
+
+    // 1. The creator's channel.
     let fromChannel = [];
     try {
-        const user = (initialData && initialData.user) || submissionUser(v ? v[1] : null, a ? a[1] : null);
-        const name = (initialData && initialData.name) || user;
-        if (user) fromChannel = shuffle(fresh(channelPool(user, name, kind, allowed))).slice(0, RECOMMEND_FROM_CHANNEL);
+        if (info.user) fromChannel = take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_EACH);
     } catch (e) { fromChannel = []; }
 
-    // 2. Fill the rest from the featured feed.
+    // 2. Other creators sharing the tags.
+    let fromTags = [];
+    try {
+        if (info.tags && info.tags.length > 0)
+            fromTags = take(tagPool(info.tags, kind, allowed).filter(p => !info.user || p.author.id.value !== info.user), RECOMMEND_EACH);
+    } catch (e) { fromTags = []; }
+
+    // 3. Featured, plus whatever the other two came up short.
+    const fromFeatured = take(featuredPool(kind, allowed), RECOMMEND_COUNT - fromChannel.length - fromTags.length);
+
+    return new VideoPager(withAvatars(shuffle(fromChannel.concat(fromTags, fromFeatured))), false);
+};
+
+// A few random pages of the featured feed, rating-filtered.
+function featuredPool(kind, allowed) {
     const feed = FEATURED_FEEDS[kind];
     if (!feed.total) {
         const first = getJson(`${BASE}/${feed.path}?offset=0&inner=1`, true);
@@ -378,15 +413,13 @@ source.getContentRecommendations = function (url, initialData) {
     const offsets = {};
     while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
         offsets[Math.floor(Math.random() * pageCount) * feed.pageSize] = true;
-    let featured = [];
+    let pool = [];
     for (const offset of Object.keys(offsets)) {
         const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
-        if (json && json.content) featured = featured.concat(filterRatings(parseCards(json.content), allowed));
+        if (json && json.content) pool = pool.concat(filterRatings(parseCards(json.content), allowed));
     }
-    featured = shuffle(fresh(featured)).slice(0, RECOMMEND_COUNT - fromChannel.length);
-
-    return new VideoPager(withAvatars(fromChannel.concat(featured)), false);
-};
+    return pool;
+}
 
 // The first few pages of a user's movies or audio, rating-filtered.
 function channelPool(user, name, kind, allowed) {
@@ -404,16 +437,46 @@ function channelPool(user, name, kind, allowed) {
     return filterRatings(pool, allowed);
 }
 
-// Username of a submission's creator, when the details object didn't pass it.
-function submissionUser(movieId, audioId) {
+// Tag search results for a few of the submission's tags, rating-filtered.
+function tagPool(tags, kind, allowed) {
+    let pool = [];
+    for (const tag of shuffle(tags.slice()).slice(0, RECOMMEND_TAGS)) {
+        const resp = http.GET(`${BASE}/search/conduct/${kind}?match=tags&tags=${encodeURIComponent(tag)}`, {}, loggedIn());
+        if (resp.isOk) pool = pool.concat(filterRatings(parseCards(resp.body), allowed));
+    }
+    return pool;
+}
+
+// Tags listed on a submission page.
+function parseTags(html) {
+    const tags = [];
+    const re = /\/search\/conduct\/(?:movies|audio)\?match=tags&(?:amp;)?tags=([^"&]+)/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+        const tag = decodeURIComponent(decode(m[1]));
+        if (tags.indexOf(tag) < 0) tags.push(tag);
+    }
+    return tags;
+}
+
+// Creator and tags of a submission, when the details object didn't pass them.
+function submissionInfo(movieId, audioId) {
+    const pageUrl = movieId ? `${BASE}/portal/view/${movieId}` : `${BASE}/audio/listen/${audioId}`;
+    const resp = http.GET(pageUrl, {}, loggedIn());
+    if (resp.isOk) {
+        const author = parsePageMeta(resp.body).author;
+        return {
+            user: author ? channelName(author.url) : null,
+            name: author ? author.name : null,
+            tags: parseTags(resp.body)
+        };
+    }
+    // Blocked adult page: the video info still names the creator.
     if (movieId) {
         const json = getJson(`${BASE}/portal/video/${movieId}`, true);
-        return json && json.author ? String(json.author).toLowerCase() : null;
+        if (json && json.author) return { user: String(json.author).toLowerCase(), name: json.author, tags: [] };
     }
-    const resp = http.GET(`${BASE}/audio/listen/${audioId}`, {}, loggedIn());
-    if (!resp.isOk) return null;
-    const author = parsePageMeta(resp.body).author;
-    return author ? channelName(author.url) : null;
+    return { user: null, name: null, tags: [] };
 }
 
 function shuffle(list) {
