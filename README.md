@@ -12,7 +12,7 @@ Files:
 - **Content ratings**: plugin settings choose which age ratings (E / T / M / A) show up in search, channels, favorites and recommendations
 - **Channel search**: finds Newgrounds users
 - **Playback**: movies stream as MP4 (360p/720p/1080p, whatever the upload has); audio plays as MP3
-- **Recommendations**: 20 random featured movies under each movie, and 20 random featured audio tracks under each audio track (new picks every time)
+- **Recommendations**: 5 random picks from the creator's own channel first, then random featured picks to make 20: movies under a movie, audio under audio (new picks every time)
 - **Comments**: Newgrounds reviews show as comments, with the reviewer, date and star score (newest first)
 - **Channels**: `https://USERNAME.newgrounds.com`: profile, fan count, and all of the user's movies, then their audio
 - **Favorites**: `USERNAME.newgrounds.com/favorites/movies` and `/favorites/audio` open as playlists

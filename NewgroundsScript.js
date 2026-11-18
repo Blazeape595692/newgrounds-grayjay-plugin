@@ -203,8 +203,10 @@ source.getContentDetails = function (url) {
     const details = v ? getMovieDetails(v[1]) : a ? getAudioDetails(a[1]) : null;
     if (!details) throw new ScriptException("Unsupported Newgrounds URL: " + url);
     // Grayjay asks the details object itself for the "Recommended" tab.
+    const user = details.author && details.author.url && REGEX_CHANNEL_URL.test(details.author.url)
+        ? channelName(details.author.url) : null;
     details.getContentRecommendations = function () {
-        return source.getContentRecommendations(url);
+        return source.getContentRecommendations(url, { user, name: details.author.name });
     };
     return details;
 };
@@ -336,11 +338,13 @@ function parsePageMeta(html) {
 
 // ---------------------------------------------------------------- recommendations
 
-// "Recommended" under a submission: 20 random picks from the featured feed of
-// the same kind (featured movies under a movie, featured audio under audio),
-// taken from a few random pages of that feed.
+// "Recommended" under a submission: 5 random picks from the same creator's
+// channel (their movies under a movie, their audio under audio), then random
+// picks from the featured feed of the same kind to make 20 in total.
 const RECOMMEND_COUNT = 20;
-const RECOMMEND_PAGES = 3;
+const RECOMMEND_FROM_CHANNEL = 5;
+const RECOMMEND_PAGES = 3;          // random featured pages to pick from
+const RECOMMEND_CHANNEL_PAGES = 3;  // channel pages to pick from
 const FEATURED_FEEDS = {
     movies: { path: "movies/featured", pageSize: 20, total: 0 },
     audio: { path: "audio/featured", pageSize: 30, total: 0 }
@@ -350,33 +354,75 @@ source.getContentRecommendations = function (url, initialData) {
     const v = url.match(REGEX_VIDEO_URL);
     const a = url.match(REGEX_AUDIO_URL);
     if (!v && !a) return new VideoPager([], false);
-    const feed = v ? FEATURED_FEEDS.movies : FEATURED_FEEDS.audio;
+    const kind = v ? "movies" : "audio";
     const currentId = v ? v[1] : "audio-" + a[1];
+    const allowed = allowedRatings();
+    const seen = { [currentId]: true };
+    const fresh = list => list.filter(p => !seen[p.id.value] && (seen[p.id.value] = true));
 
+    // 1. Up to 5 from the creator's channel.
+    let fromChannel = [];
+    try {
+        const user = (initialData && initialData.user) || submissionUser(v ? v[1] : null, a ? a[1] : null);
+        const name = (initialData && initialData.name) || user;
+        if (user) fromChannel = shuffle(fresh(channelPool(user, name, kind, allowed))).slice(0, RECOMMEND_FROM_CHANNEL);
+    } catch (e) { fromChannel = []; }
+
+    // 2. Fill the rest from the featured feed.
+    const feed = FEATURED_FEEDS[kind];
     if (!feed.total) {
         const first = getJson(`${BASE}/${feed.path}?offset=0&inner=1`, true);
         feed.total = (first && first.total) || 0;
     }
     const pageCount = Math.max(1, Math.ceil(feed.total / feed.pageSize));
-
     const offsets = {};
     while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
         offsets[Math.floor(Math.random() * pageCount) * feed.pageSize] = true;
-
-    let pool = [];
+    let featured = [];
     for (const offset of Object.keys(offsets)) {
         const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
-        if (json && json.content) pool = pool.concat(filterRatings(parseCards(json.content), allowedRatings()));
+        if (json && json.content) featured = featured.concat(filterRatings(parseCards(json.content), allowed));
     }
+    featured = shuffle(fresh(featured)).slice(0, RECOMMEND_COUNT - fromChannel.length);
 
-    const seen = { [currentId]: true };
-    pool = pool.filter(p => !seen[p.id.value] && (seen[p.id.value] = true));
-    for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    return new VideoPager(withAvatars(pool.slice(0, RECOMMEND_COUNT)), false);
+    return new VideoPager(withAvatars(fromChannel.concat(featured)), false);
 };
+
+// The first few pages of a user's movies or audio, rating-filtered.
+function channelPool(user, name, kind, allowed) {
+    const author = new PlatformAuthorLink(
+        new PlatformID(PLATFORM, user, config.id), name, `https://${user}.newgrounds.com`, "");
+    let pool = [];
+    for (let page = 1; page <= RECOMMEND_CHANNEL_PAGES; page++) {
+        const json = getJson(`https://${user}.newgrounds.com/${kind}?page=${page}`, true);
+        if (!json || !json.items) break;
+        for (const y of Object.keys(json.items))
+            for (const cardHtml of json.items[y])
+                pool = pool.concat(datedCards(cardHtml, author, parseInt(y)));
+        if (!(json.load_more && String(json.load_more).trim())) break;
+    }
+    return filterRatings(pool, allowed);
+}
+
+// Username of a submission's creator, when the details object didn't pass it.
+function submissionUser(movieId, audioId) {
+    if (movieId) {
+        const json = getJson(`${BASE}/portal/video/${movieId}`, true);
+        return json && json.author ? String(json.author).toLowerCase() : null;
+    }
+    const resp = http.GET(`${BASE}/audio/listen/${audioId}`, {}, loggedIn());
+    if (!resp.isOk) return null;
+    const author = parsePageMeta(resp.body).author;
+    return author ? channelName(author.url) : null;
+}
+
+function shuffle(list) {
+    for (let i = list.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+    }
+    return list;
+}
 
 // ---------------------------------------------------------------- comments (reviews)
 
