@@ -130,7 +130,7 @@ class SearchPager extends VideoPager {
             const lists = [];
             const more = [];
             for (const kind of stillMore) {
-                const resp = http.GET(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {}, loggedIn());
+                const resp = ngGet(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {});
                 if (!resp.isOk) {
                     if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
                     continue;
@@ -217,11 +217,11 @@ function getMovieDetails(id) {
     const pageUrl = `${BASE}/portal/view/${id}`;
     // Adult (A) pages can answer 403 "Login required" (or be region-blocked) even
     // when the video itself is available, so fall back to the video info alone.
-    const pageResp = http.GET(pageUrl, {}, loggedIn());
+    const pageResp = ngGet(pageUrl, {});
     const html = pageResp.isOk ? pageResp.body : "";
     const pageBlocked = !pageResp.isOk;
 
-    const resp = http.GET(`${BASE}/portal/video/${id}`, XHR, loggedIn());
+    const resp = ngGet(`${BASE}/portal/video/${id}`, XHR);
     let json = null;
     try { json = JSON.parse(resp.body); } catch (e) { }
     if (!resp.isOk || !json || !json.sources) {
@@ -441,7 +441,7 @@ function channelPool(user, name, kind, allowed) {
 function tagPool(tags, kind, allowed) {
     let pool = [];
     for (const tag of shuffle(tags.slice()).slice(0, RECOMMEND_TAGS)) {
-        const resp = http.GET(`${BASE}/search/conduct/${kind}?match=tags&tags=${encodeURIComponent(tag)}`, {}, loggedIn());
+        const resp = ngGet(`${BASE}/search/conduct/${kind}?match=tags&tags=${encodeURIComponent(tag)}`, {});
         if (resp.isOk) pool = pool.concat(filterRatings(parseCards(resp.body), allowed));
     }
     return pool;
@@ -462,7 +462,7 @@ function parseTags(html) {
 // Creator and tags of a submission, when the details object didn't pass them.
 function submissionInfo(movieId, audioId) {
     const pageUrl = movieId ? `${BASE}/portal/view/${movieId}` : `${BASE}/audio/listen/${audioId}`;
-    const resp = http.GET(pageUrl, {}, loggedIn());
+    const resp = ngGet(pageUrl, {});
     if (resp.isOk) {
         const author = parsePageMeta(resp.body).author;
         return {
@@ -498,7 +498,7 @@ source.getComments = function (url) {
     const a = url.match(REGEX_AUDIO_URL);
     if (!v && !a) return new CommentPager([], false, {});
     const pageUrl = v ? `${BASE}/portal/view/${v[1]}` : `${BASE}/audio/listen/${a[1]}`;
-    const resp = http.GET(pageUrl, {}, loggedIn());
+    const resp = ngGet(pageUrl, {});
     if (!resp.isOk) return new CommentPager([], false, {}); // e.g. a blocked adult page
     const html = resp.body;
 
@@ -528,7 +528,7 @@ class ReviewPager extends CommentPager {
         const stop = Math.min(c.last, c.next + REVIEW_PAGES_PER_BATCH - 1);
         let page = c.next;
         for (; page <= stop; page++) {
-            const resp = http.GET(`${BASE}/reviews/portal/${c.id}/${c.type}/date/${page}`, XHR, loggedIn());
+            const resp = ngGet(`${BASE}/reviews/portal/${c.id}/${c.type}/date/${page}`, XHR);
             if (!resp.isOk) break;
             results = results.concat(parseReviews(resp.body, c.pageUrl));
         }
@@ -843,14 +843,30 @@ function loggedIn() {
     catch (e) { return false; }
 }
 
+// GET with the Newgrounds login when logged in. If Newgrounds refuses the
+// logged-in request (403, e.g. adult content turned on from a country with
+// age-verification laws), try once more without the login, so lists still load.
+function ngGet(url, headers) {
+    const useAuth = loggedIn();
+    const resp = http.GET(url, headers || {}, useAuth);
+    if (resp.code === 403 && useAuth) {
+        const retry = http.GET(url, headers || {}, false);
+        if (retry.isOk) {
+            log("Newgrounds refused the logged-in request, used a logged-out one: " + url);
+            return retry;
+        }
+    }
+    return resp;
+}
+
 function getHtml(url) {
-    const resp = http.GET(url, {}, loggedIn());
+    const resp = ngGet(url, {});
     if (!resp.isOk) throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);
     return resp.body;
 }
 
 function getJson(url, allowFail) {
-    const resp = http.GET(url, XHR, loggedIn());
+    const resp = ngGet(url, XHR);
     if (!resp.isOk) {
         if (allowFail) return null;
         throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);
@@ -878,7 +894,7 @@ function withAvatars(videos) {
         let responses = null;
         try {
             let batch = http.batch();
-            for (const slug of need) batch = batch.GET(`https://${slug}.newgrounds.com/`, {}, loggedIn());
+            for (const slug of need) batch = batch.GET(`https://${slug}.newgrounds.com/`, {}, false);
             responses = batch.execute();
         } catch (e) { responses = null; }
         need.forEach((slug, i) => {
