@@ -7,10 +7,10 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 15,
+	"version": 16,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
-	"scriptSignature": "duHpKCzRd2xqJOdj5lbpvudBkFGxnpNAZvo5SDPJB27sLFCOsspT3g1FK3geLOugAe1iPtU1wJFOx76D1fuCWDn/FWj81xLhGg3UdJ54E1qCOtvih5rcP36XLlP+fgfHdBfmwC8MYSi+GWfMKMd8rvDpiDNGjVn9xmVXCot+QP5Z8e4dmCRBcfIRf5o4yhihiUa3s8kVAuyOm/PNAzvAcG6a5OggglTtAkPForvZsIGWk1fxhhgAcEZVjP7Px7/rCeEPrrk2ZCeD2qwn0VH+tJq+Pbbhk3764VDdOWJjpEfzF7lQU17gPkYooALHkGovwPa+64Pc2PgewPg7WeEhdw==",
+	"scriptSignature": "qz1jhAnAvA57Fh8nUcigsV7rL5150ZydXOFMSEXsj8U/72Q8QxY2/NaUeB3/ibHYg1TTcdWelSQM1TZCGsqF6p2NS+RIeOR7mstmHIx1TfGx8aDBl6XH78Ioi/QmGhr7ySBMhDMKh5AlakpMcPWFN9WqlJqvF2DJhRw61c13OZ6hghdgLc4sgSLhPelM4z+SgPZC7l41/5DAAl69aGXqJd3w3UxDucb47GWrzrN0kAWfoexCYorHCBFwD2OlODY85FIcQaT3xkFzIeuxVPryYmp9DMneZO91lluMxvz3Ju6GQnm+H1A+3TsVg6mNSg8wthoaRLs1GtkUkNrwEFvXhA==",
 	"scriptPublicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx5Fueo7N+toYsVtk159/k6w7YLtU+9lBdUdKT/m7rYpGwD0CBQd3BwggG8CTWXN4R0LSTMmUHHaLAPCb8cPF/TUAOqzg30k816AtRkZeVqowH8LNUnH46nIto7Bn6VasQTMYgMYkfSbsNGlQ5IqMFy7ypwvpok1PHRbXsbaRkbEkGz8Z14bWdo28aHenu9VaqI4f6I9WT/ftKtr7yHX8DKdm7TbWP+fH8i4nKWV53fKXt96jmIvDedNsZC3dTqCNH5QJhAJ1umKG6Gg2QMhDxpgpKkJU3QXmbLvR8yqtbuXAjouPhpgrM1uYSwD77OyZ/k+QFz1qE5MW7rRpsiIojQIDAQAB",
 	"packages": [
 		"Http"
@@ -36,7 +36,7 @@
 		{
 			"variable": "showAvatars",
 			"name": "Show author pictures in lists",
-			"description": "Looks up each author's profile picture for Home, search and recommendations. Turn off to load lists faster.",
+			"description": "Looks up author profile pictures, a few per list, and remembers them. Turn off to send fewer requests to Newgrounds.",
 			"type": "Boolean",
 			"default": "true"
 		},

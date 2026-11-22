@@ -88,6 +88,10 @@ These apply to search, channels, favorites and recommendations. Home never shows
 
 Posting reviews or liking from Grayjay isn't possible: Grayjay doesn't let plugins send comments or likes to a site.
 
+## NG Guard (403 errors)
+
+Newgrounds runs a bot check called NG Guard. If a connection sends many requests quickly, Newgrounds answers with a 403 "NG Guard" page for a few minutes. VPN addresses are shared by many people, so they hit it more often. The plugin keeps its requests low (a few author pictures per list, remembered between restarts, and about five requests per Recommended tab) and backs off for five minutes when it sees the check. If you still get the NG Guard error, wait a few minutes, log in (logged-in members skip the check), or open newgrounds.com in a browser on the same connection.
+
 ## Limitations
 - Reviews have no replies or likes, since Newgrounds doesn't show them publicly.
 - Adult-rated (A) content only plays when logged in, and needs a VPN in countries with age-verification laws, such as the UK.

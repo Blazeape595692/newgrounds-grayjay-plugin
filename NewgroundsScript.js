@@ -26,6 +26,25 @@ let settings = {};
 source.enable = function (conf, sets, savedState) {
     config = conf ?? {};
     settings = sets ?? {};
+    // Remembered between app restarts, so pictures and feed sizes aren't re-fetched.
+    try {
+        const state = savedState ? JSON.parse(savedState) : null;
+        if (state && state.avatars) avatarCache = state.avatars;
+        if (state && state.totals)
+            for (const k of Object.keys(state.totals))
+                if (FEATURED_FEEDS[k]) FEATURED_FEEDS[k].total = state.totals[k];
+    } catch (e) { }
+};
+
+source.saveState = function () {
+    // Keep the newest 3000 pictures so the saved state stays small.
+    const keys = Object.keys(avatarCache);
+    const avatars = {};
+    for (const k of keys.slice(Math.max(0, keys.length - 3000))) avatars[k] = avatarCache[k];
+    return JSON.stringify({
+        avatars,
+        totals: { movies: FEATURED_FEEDS.movies.total, audio: FEATURED_FEEDS.audio.total }
+    });
 };
 
 source.disable = function () { };
@@ -132,6 +151,7 @@ class SearchPager extends VideoPager {
             for (const kind of stillMore) {
                 const resp = ngGet(`${BASE}/search/conduct/${kind}?terms=${encodeURIComponent(query)}&page=${page}`, {});
                 if (!resp.isOk) {
+                    if (isGuard(resp)) throw new ScriptException(GUARD_MESSAGE);
                     if (kinds.length === 1) throw new ScriptException(`Newgrounds search failed (${resp.code})`);
                     continue;
                 }
@@ -218,6 +238,7 @@ function getMovieDetails(id) {
     // Adult (A) pages can answer 403 "Login required" (or be region-blocked) even
     // when the video itself is available, so fall back to the video info alone.
     const pageResp = ngGet(pageUrl, {});
+    if (isGuard(pageResp)) throw new ScriptException(GUARD_MESSAGE);
     const html = pageResp.isOk ? pageResp.body : "";
     const pageBlocked = !pageResp.isOk;
 
@@ -350,9 +371,11 @@ function parsePageMeta(html) {
 // audio. If one source comes up short, featured picks fill the gap.
 const RECOMMEND_EACH = 5;
 const RECOMMEND_COUNT = RECOMMEND_EACH * 3;
-const RECOMMEND_PAGES = 3;          // random featured pages to pick from
-const RECOMMEND_CHANNEL_PAGES = 3;  // channel pages to pick from
-const RECOMMEND_TAGS = 3;           // tags to search
+// Kept small: Newgrounds' bot check (NG Guard) blocks connections that make
+// many requests quickly.
+const RECOMMEND_PAGES = 1;          // random featured pages to pick from
+const RECOMMEND_CHANNEL_PAGES = 1;  // channel pages to pick from
+const RECOMMEND_TAGS = 2;           // tags to search
 const FEATURED_FEEDS = {
     movies: { path: "movies/featured", pageSize: 20, total: 0 },
     audio: { path: "audio/featured", pageSize: 30, total: 0 }
@@ -383,16 +406,17 @@ source.getContentRecommendations = function (url, initialData) {
         catch (e) { info = { user: null, name: null, tags: [] }; }
     }
 
-    // 1. The creator's channel.
+    // 1. The creator's channel. (Channel and tag picks are skipped while
+    // Newgrounds' bot check is active, to keep requests down.)
     let fromChannel = [];
     try {
-        if (info.user) fromChannel = take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_EACH);
+        if (info.user && !backingOff()) fromChannel = take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_EACH);
     } catch (e) { fromChannel = []; }
 
     // 2. Other creators sharing the tags.
     let fromTags = [];
     try {
-        if (info.tags && info.tags.length > 0)
+        if (info.tags && info.tags.length > 0 && !backingOff())
             fromTags = take(tagPool(info.tags, kind, allowed).filter(p => !info.user || p.author.id.value !== info.user), RECOMMEND_EACH);
     } catch (e) { fromTags = []; }
 
@@ -846,9 +870,31 @@ function loggedIn() {
 // GET with the Newgrounds login when logged in. If Newgrounds refuses the
 // logged-in request (403, e.g. adult content turned on from a country with
 // age-verification laws), try once more without the login, so lists still load.
+const GUARD_BACKOFF_MS = 5 * 60 * 1000;
+const GUARD_MESSAGE = "Newgrounds' bot check (NG Guard) is blocking requests from your connection. " +
+    "It usually clears after a few minutes. Logged-in members skip it, so logging in " +
+    "(plugin settings → Login) also helps. Opening newgrounds.com in a browser on the same connection can clear it too.";
+let guardUntil = 0;
+
+// Newgrounds' bot check answers 403 with its own "NG Guard" page.
+function isGuard(resp) {
+    return resp && resp.code === 403 && /NG Guard|\/_guard\//.test(resp.body || "");
+}
+function noteGuard() {
+    guardUntil = Date.now() + GUARD_BACKOFF_MS;
+}
+// True for a few minutes after hitting the bot check: optional requests are skipped.
+function backingOff() {
+    return Date.now() < guardUntil;
+}
+
 function ngGet(url, headers) {
     const useAuth = loggedIn();
     const resp = http.GET(url, headers || {}, useAuth);
+    if (isGuard(resp)) {
+        noteGuard();
+        return resp;
+    }
     if (resp.code === 403 && useAuth) {
         const retry = http.GET(url, headers || {}, false);
         if (retry.isOk) {
@@ -861,6 +907,7 @@ function ngGet(url, headers) {
 
 function getHtml(url) {
     const resp = ngGet(url, {});
+    if (isGuard(resp)) throw new ScriptException(GUARD_MESSAGE);
     if (!resp.isOk) throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);
     return resp.body;
 }
@@ -869,6 +916,7 @@ function getJson(url, allowFail) {
     const resp = ngGet(url, XHR);
     if (!resp.isOk) {
         if (allowFail) return null;
+        if (isGuard(resp)) throw new ScriptException(GUARD_MESSAGE);
         throw new ScriptException(`Newgrounds request failed (${resp.code}): ${url}`);
     }
     try {
@@ -881,15 +929,17 @@ function getJson(url, allowFail) {
 
 // List pages don't include author pictures, so look them up from each author's
 // profile page (og:image), all at once, and remember them for the session.
-const avatarCache = {};
+let avatarCache = {};
+const AVATAR_LOOKUPS = 6; // new pictures looked up per list; the rest fill in as you browse
 
 function withAvatars(videos) {
     if (!isOn(settings.showAvatars, true)) return videos;
-    const need = [];
+    let need = [];
     for (const v of videos) {
         const slug = v.author && !v.author.thumbnail && v.author.id ? v.author.id.value : null;
         if (slug && slug !== "unknown" && !(slug in avatarCache) && need.indexOf(slug) < 0) need.push(slug);
     }
+    need = backingOff() ? [] : need.slice(0, AVATAR_LOOKUPS);
     if (need.length > 0) {
         let responses = null;
         try {
@@ -899,6 +949,7 @@ function withAvatars(videos) {
         } catch (e) { responses = null; }
         need.forEach((slug, i) => {
             const r = responses ? responses[i] : null;
+            if (r && isGuard(r)) noteGuard();
             // Only remember successful lookups, so a failed one is retried next time.
             if (r && r.isOk) avatarCache[slug] = decode(metaProp(r.body, "og:image")) || "";
         });
