@@ -12,7 +12,7 @@ const PAGE_SIZE = 20;
 
 const REGEX_VIDEO_URL = /^https?:\/\/(?:www\.)?newgrounds\.com\/portal\/view\/(\d+)/i;
 const REGEX_AUDIO_URL = /^https?:\/\/(?:www\.)?newgrounds\.com\/audio\/listen\/(\d+)/i;
-const REGEX_CHANNEL_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/?/i;
+const REGEX_CHANNEL_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com(?:[\/?#]|$)/i;
 const REGEX_FAVORITES_URL = /^https?:\/\/(?!www\.)([a-z0-9_-]+)\.newgrounds\.com\/favorites\/(movies|audio)\/?(?:[?#].*)?$/i;
 
 // When a page comes back empty after rating filtering, try up to this many more pages.
@@ -29,10 +29,15 @@ source.enable = function (conf, sets, savedState) {
     // Remembered between app restarts, so pictures and feed sizes aren't re-fetched.
     try {
         const state = savedState ? JSON.parse(savedState) : null;
-        if (state && state.avatars) avatarCache = state.avatars;
+        avatarCache = Object.create(null);
+        if (state && state.avatars && typeof state.avatars === "object")
+            for (const k of Object.keys(state.avatars))
+                if (safeSlug(k) === k) avatarCache[k] = safeImageUrl(state.avatars[k]);
         if (state && state.totals)
-            for (const k of Object.keys(state.totals))
-                if (FEATURED_FEEDS[k]) FEATURED_FEEDS[k].total = state.totals[k];
+            for (const k of ["movies", "audio"]) {
+                const t = Number(state.totals[k]);
+                if (Number.isFinite(t) && t >= 0) FEATURED_FEEDS[k].total = Math.floor(t);
+            }
     } catch (e) { }
 };
 
@@ -88,7 +93,8 @@ class FeaturedPager extends VideoPager {
         let tries = 0;
         do {
             const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`);
-            total = json.total ?? 0;
+            // Newgrounds serves nothing past offset 10000, so stop there.
+            total = Math.min(json.total ?? 0, 10000);
             results = filterRatings(parseCards(json.content ?? ""), allowed);
             offset += PAGE_SIZE;
         } while (results.length === 0 && offset < total && ++tries < MAX_EMPTY_PAGES);
@@ -135,7 +141,7 @@ source.search = function (query, type, order, filters) {
     let allowed = allowedRatings();
     if (loggedIn() && filters && filters.rating && filters.rating.length > 0) {
         allowed = { e: false, t: false, m: false, a: false };
-        for (const r of filters.rating) if (r in allowed) allowed[r] = true;
+        for (const r of filters.rating) if (hasOwn(allowed, r)) allowed[r] = true;
     }
     return new SearchPager(query, kinds, 1, allowed);
 };
@@ -376,6 +382,7 @@ const RECOMMEND_COUNT = RECOMMEND_EACH * 3;
 const RECOMMEND_PAGES = 1;          // random featured pages to pick from
 const RECOMMEND_CHANNEL_PAGES = 1;  // channel pages to pick from
 const RECOMMEND_TAGS = 2;           // tags to search
+const FEATURED_MAX_OFFSET = 9900;
 const FEATURED_FEEDS = {
     movies: { path: "movies/featured", pageSize: 20, total: 0 },
     audio: { path: "audio/featured", pageSize: 30, total: 0 }
@@ -388,7 +395,8 @@ source.getContentRecommendations = function (url, initialData) {
     const kind = v ? "movies" : "audio";
     const currentId = v ? v[1] : "audio-" + a[1];
     const allowed = allowedRatings();
-    const seen = { [currentId]: true };
+    const seen = Object.create(null);
+    seen[currentId] = true;
     const take = (list, n) => {
         const out = [];
         for (const p of shuffle(list)) {
@@ -433,7 +441,9 @@ function featuredPool(kind, allowed) {
         const first = getJson(`${BASE}/${feed.path}?offset=0&inner=1`, true);
         feed.total = (first && first.total) || 0;
     }
-    const pageCount = Math.max(1, Math.ceil(feed.total / feed.pageSize));
+    // Newgrounds only serves featured pages below offset 10000, whatever the total says.
+    const reachable = Math.min(feed.total, FEATURED_MAX_OFFSET);
+    const pageCount = Math.max(1, Math.ceil(reachable / feed.pageSize));
     const offsets = {};
     while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
         offsets[Math.floor(Math.random() * pageCount) * feed.pageSize] = true;
@@ -447,6 +457,8 @@ function featuredPool(kind, allowed) {
 
 // The first few pages of a user's movies or audio, rating-filtered.
 function channelPool(user, name, kind, allowed) {
+    user = safeSlug(user);
+    if (!user) return [];
     const author = new PlatformAuthorLink(
         new PlatformID(PLATFORM, user, config.id), name, `https://${user}.newgrounds.com`, "");
     let pool = [];
@@ -477,8 +489,9 @@ function parseTags(html) {
     const re = /\/search\/conduct\/(?:movies|audio)\?match=tags&(?:amp;)?tags=([^"&]+)/g;
     let m;
     while ((m = re.exec(html)) !== null) {
-        const tag = decodeURIComponent(decode(m[1]));
-        if (tags.indexOf(tag) < 0) tags.push(tag);
+        let tag;
+        try { tag = decodeURIComponent(decode(m[1])); } catch (e) { continue; } // skip a badly encoded tag
+        if (tag && tags.indexOf(tag) < 0) tags.push(tag);
     }
     return tags;
 }
@@ -498,7 +511,8 @@ function submissionInfo(movieId, audioId) {
     // Blocked adult page: the video info still names the creator.
     if (movieId) {
         const json = getJson(`${BASE}/portal/video/${movieId}`, true);
-        if (json && json.author) return { user: String(json.author).toLowerCase(), name: json.author, tags: [] };
+        const user = json && safeSlug(json.author);
+        if (user) return { user, name: String(json.author), tags: [] };
     }
     return { user: null, name: null, tags: [] };
 }
@@ -622,7 +636,7 @@ function getFavoritesPage(user, kind, page) {
 source.getUserSubscriptions = function () {
     const user = currentUsername();
     const urls = [];
-    const seen = {};
+    const seen = Object.create(null);
     for (let page = 1; page <= MAX_LIST_PAGES; page++) {
         const html = getFavoritesPage(user, "following", page);
         let added = 0;
@@ -656,7 +670,7 @@ source.getPlaylist = function (url) {
     if (!m) throw new ScriptException("Not a Newgrounds favorites URL: " + url);
     const user = m[1].toLowerCase();
     const kind = m[2].toLowerCase();
-    const contents = new FavoritesPager(user, kind, 1, {});
+    const contents = new FavoritesPager(user, kind, 1, Object.create(null));
     const first = contents.results[0];
     return new PlatformPlaylistDetails({
         id: new PlatformID(PLATFORM, `fav-${kind}-${user}`, config.id),
@@ -808,7 +822,7 @@ function channelName(url) {
 // (featured feed, search results, user pages).
 function parseCards(html, fallbackAuthor) {
     const out = [];
-    const seen = {};
+    const seen = Object.create(null);
     const re = /<a\s([^>]*href="https:\/\/www\.newgrounds\.com\/(portal\/view|audio\/listen)\/(\d+)"[^>]*)>([\s\S]*?)<\/a>/g;
     let m;
     while ((m = re.exec(html)) !== null) {
@@ -929,7 +943,11 @@ function getJson(url, allowFail) {
 
 // List pages don't include author pictures, so look them up from each author's
 // profile page (og:image), all at once, and remember them for the session.
-let avatarCache = {};
+let avatarCache = Object.create(null);
+
+function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
 const AVATAR_LOOKUPS = 6; // new pictures looked up per list; the rest fill in as you browse
 
 function withAvatars(videos) {
@@ -937,7 +955,7 @@ function withAvatars(videos) {
     let need = [];
     for (const v of videos) {
         const slug = v.author && !v.author.thumbnail && v.author.id ? v.author.id.value : null;
-        if (slug && slug !== "unknown" && !(slug in avatarCache) && need.indexOf(slug) < 0) need.push(slug);
+        if (slug && safeSlug(slug) === slug && slug !== "unknown" && !hasOwn(avatarCache, slug) && need.indexOf(slug) < 0) need.push(slug);
     }
     need = backingOff() ? [] : need.slice(0, AVATAR_LOOKUPS);
     if (need.length > 0) {
@@ -951,11 +969,11 @@ function withAvatars(videos) {
             const r = responses ? responses[i] : null;
             if (r && isGuard(r)) noteGuard();
             // Only remember successful lookups, so a failed one is retried next time.
-            if (r && r.isOk) avatarCache[slug] = decode(metaProp(r.body, "og:image")) || "";
+            if (r && r.isOk) avatarCache[slug] = safeImageUrl(decode(metaProp(r.body, "og:image")));
         });
     }
     for (const v of videos) {
-        const pic = v.author && v.author.id ? avatarCache[v.author.id.value] : "";
+        const pic = v.author && v.author.id && hasOwn(avatarCache, v.author.id.value) ? avatarCache[v.author.id.value] : "";
         if (pic && !v.author.thumbnail) v.author.thumbnail = pic;
     }
     return videos;
@@ -967,10 +985,24 @@ function tagTitle(name, rating) {
     return `[${rating.toUpperCase()}] ${name}`;
 }
 
+// Newgrounds usernames are letters, digits, "_" and "-". Anything else (text from
+// a page that isn't a real username) must never be turned into a web address.
+const SLUG_RE = /^[a-z0-9_-]{1,64}$/;
+function safeSlug(name) {
+    const slug = String(name ?? "").trim().toLowerCase();
+    return SLUG_RE.test(slug) ? slug : null;
+}
+
 function authorFromName(name) {
-    const slug = String(name).trim().toLowerCase();
+    const slug = safeSlug(name);
     return new PlatformAuthorLink(
-        new PlatformID(PLATFORM, slug, config.id), name, `https://${slug}.newgrounds.com`, "");
+        new PlatformID(PLATFORM, slug ?? String(name ?? "").trim().toLowerCase(), config.id),
+        name, slug ? `https://${slug}.newgrounds.com` : "", "");
+}
+
+// Only https picture links are kept (from Newgrounds pages or the saved state).
+function safeImageUrl(url) {
+    return typeof url === "string" && /^https:\/\/[a-z0-9.-]+\.(?:ngfiles|newgrounds)\.com\//i.test(url) ? url : "";
 }
 
 function thumbs(url) {
