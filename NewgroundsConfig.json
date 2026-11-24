@@ -7,10 +7,10 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 18,
+	"version": 19,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
-	"scriptSignature": "JCTXIgZWc8FgAclNThG8pyxe+EtUMx9idyShWs0wG5tIKD0+hu/7RHKDRk0kYYwwc1ZI2OuA2twwIu/ovONYYzlZ+Tw1B1jIykAWI0EBby8E3ZS6EtVBd8d8GayjHVj0/OBP8SGzpBipKN8AAwNxD0pJLHLkdPe/SJU/GCmi7fyGWsi9FVjExiRnU4CIP3C59Qda3Vc4idrpjapdi/rbpFKw1dz9vpqR85GR9OB0zGp3yTG3vifx6GAAMvmJp+1Hl2y9lu9ild2aPSAfCQ/G77WY6uv39WAZztj/1s43f3xNPMy/FtLi5DpZzKl6oilAWeJUsuDL3Az/fTNa4PigVQ==",
+	"scriptSignature": "AbDId8qdqv6SzffXEKRni1vMJ1k0ttSvWlGdxxtN/2j0ebwSkbXftO4GhuRE/qPcUv6OySxnEUuK1IDXhU6M+jp1+xvNIHkwO/dQQo0EnjY/AqDA8OeDoQagnmT7oRDMUXU6psHbzAEqy/mCDBy8OMQ/t+WeA3qV/lkmZW2J2NvAU/hBzW00lFmUxT6RgJFtEYIHDqEicDd0HeJ0GUsLWen0vgja0I16STaZ6SLimbChedLPJsPjJoYbBXATaEpXn74JxMEI1TtvCArjW2xR5T9ysNXukRfETcbr8Ddx9/Ko2+hE4LbbSt+BVA6Fi8V+ScqbAHWRavTnIDrTZH8JQA==",
 	"scriptPublicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx5Fueo7N+toYsVtk159/k6w7YLtU+9lBdUdKT/m7rYpGwD0CBQd3BwggG8CTWXN4R0LSTMmUHHaLAPCb8cPF/TUAOqzg30k816AtRkZeVqowH8LNUnH46nIto7Bn6VasQTMYgMYkfSbsNGlQ5IqMFy7ypwvpok1PHRbXsbaRkbEkGz8Z14bWdo28aHenu9VaqI4f6I9WT/ftKtr7yHX8DKdm7TbWP+fH8i4nKWV53fKXt96jmIvDedNsZC3dTqCNH5QJhAJ1umKG6Gg2QMhDxpgpKkJU3QXmbLvR8yqtbuXAjouPhpgrM1uYSwD77OyZ/k+QFz1qE5MW7rRpsiIojQIDAQAB",
 	"packages": [
 		"Http"

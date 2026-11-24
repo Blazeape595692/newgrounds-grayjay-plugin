@@ -75,9 +75,15 @@ function allowedRatings() {
     return allowed;
 }
 
-// Drops items whose rating isn't allowed. Items with no rating (audio) are kept.
+// Drops items whose rating isn't allowed. Audio has no rating and is kept. A
+// movie whose rating couldn't be read is treated as adult (A), so a missing
+// rating can never slip adult content past the filter or onto Home.
 function filterRatings(items, allowed) {
-    return items.filter(v => !v._ngRating || allowed[v._ngRating]);
+    return items.filter(v => {
+        if (v._ngRating) return !!allowed[v._ngRating];
+        const isMovie = typeof v.url === "string" && v.url.includes("/portal/view/");
+        return isMovie ? !!allowed.a : true;
+    });
 }
 
 // ---------------------------------------------------------------- home
@@ -206,7 +212,7 @@ class UserSearchPager extends ChannelPager {
             results.push(new PlatformChannel({
                 id: new PlatformID(PLATFORM, name.toLowerCase(), config.id),
                 name: name,
-                thumbnail: match(block, /<image href="([^"]+)"/) ?? "",
+                thumbnail: safeImageUrl(decode(match(block, /<image href="([^"]+)"/))),
                 banner: "",
                 subscribers: -1,
                 description: "",
@@ -258,7 +264,7 @@ function getMovieDetails(id) {
     let json = null;
     try { json = JSON.parse(resp.body); } catch (e) { }
     if (!resp.isOk || !json || !json.sources) {
-        const err = json && json.errors ? json.errors.join(" ") : `HTTP ${resp.code}`;
+        const err = json && Array.isArray(json.errors) ? json.errors.map(String).join(" ").slice(0, 200) : `HTTP ${resp.code}`;
         if (pageBlocked)
             throw new ScriptException(`Newgrounds blocked this movie (${pageResp.code}). Adult-rated movies need you logged in. In countries with age-verification laws, such as the UK, you'll also need a VPN set to another country.`);
         throw new ScriptException("Could not load this movie (it may be a Flash/Ruffle submission): " + err);
@@ -267,8 +273,9 @@ function getMovieDetails(id) {
     const sources = [];
     for (const quality of Object.keys(json.sources)) {
         const height = parseInt(quality) || 0;
+        if (!Array.isArray(json.sources[quality])) continue;
         for (const s of json.sources[quality]) {
-            if (!s.src) continue;
+            if (!s || !safeMediaUrl(s.src)) continue;
             sources.push(new VideoUrlSource({
                 name: quality,
                 url: s.src,
@@ -282,6 +289,7 @@ function getMovieDetails(id) {
         }
     }
     sources.sort((a, b) => b.height - a.height);
+    if (sources.length === 0) throw new ScriptException("Could not load this movie: Newgrounds gave no usable video file.");
 
     const meta = parsePageMeta(html);
     // A blocked page only happens for adult-rated movies.
@@ -309,7 +317,7 @@ function getMovieDetails(id) {
 function getAudioDetails(id) {
     const pageUrl = `${BASE}/audio/listen/${id}`;
     const html = getHtml(pageUrl);
-    const mp3 = decode(metaProp(html, "og:audio"));
+    const mp3 = safeMediaUrl(decode(metaProp(html, "og:audio")));
     if (!mp3)
         throw new ScriptException("Could not find an audio stream for this submission.");
 
@@ -346,7 +354,7 @@ function getAudioDetails(id) {
 
 function parsePageMeta(html) {
     const title = decode(metaProp(html, "og:title")) || "";
-    const thumbnail = decode(metaItemprop(html, "thumbnailUrl") || metaProp(html, "og:image")) || "";
+    const thumbnail = safeImageUrl(decode(metaItemprop(html, "thumbnailUrl") || metaProp(html, "og:image")));
     const dateStr = metaItemprop(html, "datePublished") || metaItemprop(html, "uploadDate");
     const date = dateStr ? Math.floor(Date.parse(dateStr) / 1000) : 0;
 
@@ -363,9 +371,9 @@ function parsePageMeta(html) {
     if (userBlock) {
         const url = match(userBlock, /href="(https:\/\/[a-z0-9_-]+\.newgrounds\.com)"/i);
         const name = decode(match(userBlock, /<h4[^>]*>\s*<a [^>]*>([^<]+)<\/a>/));
-        const icon = match(userBlock, /<image href="([^"]+)"/);
+        const icon = safeImageUrl(decode(match(userBlock, /<image href="([^"]+)"/)));
         if (url && name)
-            author = new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, url, icon ?? "");
+            author = new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, url, icon);
     }
 
     let rating = null;
@@ -519,6 +527,7 @@ function refreshMs() {
 }
 
 const listCache = Object.create(null);
+const LIST_CACHE_MAX = 300;
 
 // Returns a remembered list if it's fresh enough, else fetches it. Failed
 // fetches aren't remembered. While Newgrounds' bot check is active, nothing new
@@ -528,7 +537,15 @@ function cachedList(key, maxAgeMs, fetchItems) {
     if (hit && Date.now() - hit.at < maxAgeMs) return hit.items;
     if (backingOff()) return hit ? hit.items : [];
     const items = fetchItems();
-    if (items) listCache[key] = { at: Date.now(), items };
+    if (items) {
+        listCache[key] = { at: Date.now(), items };
+        // Keep memory bounded: drop the oldest lists past LIST_CACHE_MAX.
+        const keys = Object.keys(listCache);
+        if (keys.length > LIST_CACHE_MAX) {
+            keys.sort((x, y) => listCache[x].at - listCache[y].at);
+            for (const k of keys.slice(0, keys.length - LIST_CACHE_MAX)) delete listCache[k];
+        }
+    }
     return items || (hit ? hit.items : []);
 }
 
@@ -678,7 +695,7 @@ function featuredFromSaved(saved) {
         if (!pages || typeof pages !== "object") continue;
         for (const offset of Object.keys(pages)) {
             if (!/^\d{1,5}$/.test(offset) || !Array.isArray(pages[offset])) continue;
-            const items = pages[offset].map(cardToVideo).filter(Boolean);
+            const items = pages[offset].map(card => cardToVideo(card)).filter(Boolean);
             if (items.length > 0) featuredCache[kind][offset] = items;
         }
     }
@@ -752,7 +769,7 @@ function parseReviews(html, contextUrl) {
         const userUrl = match(block, /<a href="(https:\/\/[a-z0-9_-]+\.newgrounds\.com)"/i);
         const name = decode(match(block, /<span class="padded-half-left">([^<]+)<\/span>/) ??
             match(block, /title="([^"]+)"/)) || "Anonymous";
-        const avatar = match(block, /<image href="([^"]+)"/) ?? "";
+        const avatar = safeImageUrl(decode(match(block, /<image href="([^"]+)"/)));
         const author = userUrl
             ? new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, userUrl, avatar)
             : new PlatformAuthorLink(new PlatformID(PLATFORM, "", config.id), name, "", avatar);
@@ -877,7 +894,7 @@ function parseFavoriteAudio(html) {
         out.push(new PlatformVideo({
             id: new PlatformID(PLATFORM, "audio-" + id, config.id),
             name: htmlToText(decode(m[2])),
-            thumbnails: thumbs(match(m[3], /<img[^>]*src="([^"]+)"/)),
+            thumbnails: thumbs(safeImageUrl(decode(match(m[3], /<img[^>]*src="([^"]+)"/)))),
             author: new PlatformAuthorLink(new PlatformID(PLATFORM, name.toLowerCase(), config.id), name, m[4], ""),
             uploadDate: 0,
             datetime: 0,
@@ -903,7 +920,7 @@ source.getChannel = function (url) {
     const html = getHtml(channelUrl + "/");
 
     const name = (decode(metaProp(html, "og:title")) || user).replace(/\s*-\s*newgrounds\.com\s*$/i, "");
-    const avatar = decode(metaProp(html, "og:image")) || "";
+    const avatar = safeImageUrl(decode(metaProp(html, "og:image")));
     const fansStr = match(html, /FANS<\/span>\s*<strong>([^<]+)<\/strong>/i);
 
     return new PlatformChannel({
@@ -1188,6 +1205,11 @@ function authorFromName(name) {
     return new PlatformAuthorLink(
         new PlatformID(PLATFORM, slug ?? String(name ?? "").trim().toLowerCase(), config.id),
         name, slug ? `https://${slug}.newgrounds.com` : "", "");
+}
+
+// Only https video/audio files on Newgrounds' own file servers are played.
+function safeMediaUrl(url) {
+    return typeof url === "string" && /^https:\/\/(?:[a-z0-9-]+\.)*(?:ungrounded\.net|ngfiles\.com|newgrounds\.com)\//i.test(url) ? url : "";
 }
 
 // Only https picture links are kept (from Newgrounds pages or the saved state).
