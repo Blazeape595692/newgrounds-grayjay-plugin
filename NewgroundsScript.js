@@ -38,6 +38,7 @@ source.enable = function (conf, sets, savedState) {
                 const t = Number(state.totals[k]);
                 if (Number.isFinite(t) && t >= 0) FEATURED_FEEDS[k].total = Math.floor(t);
             }
+        featuredFromSaved(state && state.featured);
     } catch (e) { }
 };
 
@@ -48,7 +49,8 @@ source.saveState = function () {
     for (const k of keys.slice(Math.max(0, keys.length - 3000))) avatars[k] = avatarCache[k];
     return JSON.stringify({
         avatars,
-        totals: { movies: FEATURED_FEEDS.movies.total, audio: FEATURED_FEEDS.audio.total }
+        totals: { movies: FEATURED_FEEDS.movies.total, audio: FEATURED_FEEDS.audio.total },
+        featured: featuredForSaving()
     });
 };
 
@@ -95,7 +97,10 @@ class FeaturedPager extends VideoPager {
             const json = getJson(`${BASE}/movies/featured?offset=${offset}&inner=1`);
             // Newgrounds serves nothing past offset 10000, so stop there.
             total = Math.min(json.total ?? 0, 10000);
-            results = filterRatings(parseCards(json.content ?? ""), allowed);
+            if (json.total) FEATURED_FEEDS.movies.total = json.total;
+            const items = parseCards(json.content ?? "");
+            rememberFeatured("movies", offset, items); // reused by Recommended
+            results = filterRatings(items, allowed);
             offset += PAGE_SIZE;
         } while (results.length === 0 && offset < total && ++tries < MAX_EMPTY_PAGES);
         super(withAvatars(results), offset < total, { offset, allowed });
@@ -231,8 +236,9 @@ source.getContentDetails = function (url) {
     // Grayjay asks the details object itself for the "Recommended" tab.
     const user = details.author && details.author.url && REGEX_CHANNEL_URL.test(details.author.url)
         ? channelName(details.author.url) : null;
-    const info = { user, name: details.author ? details.author.name : null, tags: details._ngTags || [] };
-    delete details._ngTags;
+    const info = Object.assign(emptyInfo(), details._ngInfo || {},
+        { user, name: details.author ? details.author.name : null });
+    delete details._ngInfo;
     details.getContentRecommendations = function () {
         return source.getContentRecommendations(url, info);
     };
@@ -296,7 +302,7 @@ function getMovieDetails(id) {
         video: new VideoSourceDescriptor(sources),
         rating: meta.rating
     });
-    details._ngTags = parseTags(html);
+    details._ngInfo = parseRelated(html, "movies");
     return details;
 }
 
@@ -334,7 +340,7 @@ function getAudioDetails(id) {
         video: new UnMuxVideoSourceDescriptor([], [audio]),
         rating: meta.rating
     });
-    details._ngTags = parseTags(html);
+    details._ngInfo = parseRelated(html, "audio");
     return details;
 }
 
@@ -371,18 +377,25 @@ function parsePageMeta(html) {
 
 // ---------------------------------------------------------------- recommendations
 
-// "Recommended" under a submission: 5 random picks from the same creator's
-// channel, 5 from other creators that share the submission's tags, and 5 from
-// the featured feed, all mixed together. Movies under a movie, audio under
-// audio. If one source comes up short, featured picks fill the gap.
-const RECOMMEND_EACH = 5;
-const RECOMMEND_COUNT = RECOMMEND_EACH * 3;
-// Kept small: Newgrounds' bot check (NG Guard) blocks connections that make
-// many requests quickly.
-const RECOMMEND_PAGES = 1;          // random featured pages to pick from
-const RECOMMEND_CHANNEL_PAGES = 1;  // channel pages to pick from
-const RECOMMEND_TAGS = 2;           // tags to search
-const FEATURED_MAX_OFFSET = 9900;
+// "Recommended" under a submission: 15 picks, mixed together, from things
+// related to what you're watching:
+//   - up to 4 from the same series (sequels / episodes), if it's in one
+//   - 4 from the same creator
+//   - 4 popular ones from the same genre
+//   - 3 from the same collection, or else from other creators sharing its tags
+//   - featured picks fill whatever the others came up short
+// Movies under a movie, audio under audio. Every list is cached (see below),
+// so after some browsing most videos need few or no new requests.
+const RECOMMEND_COUNT = 15;
+const RECOMMEND_SERIES = 4;
+const RECOMMEND_CREATOR = 4;
+const RECOMMEND_GENRE = 4;
+const RECOMMEND_THEME = 3;            // collection, or tags
+const RECOMMEND_CHANNEL_PAGES = 1;    // channel pages to pick from
+const RECOMMEND_TAGS = 2;             // tags to search
+const RECOMMEND_VISUAL_LINKS = 20;    // series/collection items to look up
+const FEATURED_POOL_TARGET = 120;     // featured items to keep for picking from
+const FEATURED_MAX_OFFSET = 9900;     // Newgrounds serves nothing past offset 10000
 const FEATURED_FEEDS = {
     movies: { path: "movies/featured", pageSize: 20, total: 0 },
     audio: { path: "audio/featured", pageSize: 30, total: 0 }
@@ -397,90 +410,62 @@ source.getContentRecommendations = function (url, initialData) {
     const allowed = allowedRatings();
     const seen = Object.create(null);
     seen[currentId] = true;
-    const take = (list, n) => {
+    const take = (list, n, keep) => {
         const out = [];
-        for (const p of shuffle(list)) {
+        for (const p of shuffle(list.slice())) {
             if (out.length >= n) break;
-            if (seen[p.id.value]) continue;
+            if (seen[p.id.value] || (keep && !keep(p))) continue;
             seen[p.id.value] = true;
             out.push(p);
         }
         return out;
     };
+    const safely = f => { try { return f(); } catch (e) { return []; } };
 
     let info = initialData && initialData.user !== undefined ? initialData : null;
     if (!info) {
         try { info = submissionInfo(v ? v[1] : null, a ? a[1] : null); }
-        catch (e) { info = { user: null, name: null, tags: [] }; }
+        catch (e) { info = emptyInfo(); }
     }
+    const notCreator = p => !info.user || p.author.id.value !== info.user;
 
-    // 1. The creator's channel. (Channel and tag picks are skipped while
-    // Newgrounds' bot check is active, to keep requests down.)
-    let fromChannel = [];
-    try {
-        if (info.user && !backingOff()) fromChannel = take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_EACH);
-    } catch (e) { fromChannel = []; }
+    // While Newgrounds' bot check is active, only lists already cached are used.
+    const fromSeries = info.series ? safely(() => take(visualLinkPool(`${BASE}/series/${info.series}`, kind, allowed), RECOMMEND_SERIES)) : [];
+    const fromCreator = info.user ? safely(() => take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_CREATOR)) : [];
+    const fromGenre = info.genreUrl ? safely(() => take(genrePool(info.genreUrl, allowed), RECOMMEND_GENRE, notCreator)) : [];
+    let fromTheme = info.collection ? safely(() => take(visualLinkPool(`${BASE}/collection/${info.collection}`, kind, allowed), RECOMMEND_THEME, notCreator)) : [];
+    if (fromTheme.length < RECOMMEND_THEME && info.tags && info.tags.length > 0)
+        fromTheme = fromTheme.concat(safely(() => take(tagPool(info.tags, kind, allowed), RECOMMEND_THEME - fromTheme.length, notCreator)));
 
-    // 2. Other creators sharing the tags.
-    let fromTags = [];
-    try {
-        if (info.tags && info.tags.length > 0 && !backingOff())
-            fromTags = take(tagPool(info.tags, kind, allowed).filter(p => !info.user || p.author.id.value !== info.user), RECOMMEND_EACH);
-    } catch (e) { fromTags = []; }
-
-    // 3. Featured, plus whatever the other two came up short.
-    const fromFeatured = take(featuredPool(kind, allowed), RECOMMEND_COUNT - fromChannel.length - fromTags.length);
-
-    return new VideoPager(withAvatars(shuffle(fromChannel.concat(fromTags, fromFeatured))), false);
+    let picks = fromSeries.concat(fromCreator, fromGenre, fromTheme);
+    picks = picks.concat(safely(() => take(featuredPool(kind, allowed), RECOMMEND_COUNT - picks.length)));
+    return new VideoPager(withAvatars(shuffle(picks)), false);
 };
 
-// A few random pages of the featured feed, rating-filtered.
-function featuredPool(kind, allowed) {
-    const feed = FEATURED_FEEDS[kind];
-    if (!feed.total) {
-        const first = getJson(`${BASE}/${feed.path}?offset=0&inner=1`, true);
-        feed.total = (first && first.total) || 0;
-    }
-    // Newgrounds only serves featured pages below offset 10000, whatever the total says.
-    const reachable = Math.min(feed.total, FEATURED_MAX_OFFSET);
-    const pageCount = Math.max(1, Math.ceil(reachable / feed.pageSize));
-    const offsets = {};
-    while (Object.keys(offsets).length < Math.min(RECOMMEND_PAGES, pageCount))
-        offsets[Math.floor(Math.random() * pageCount) * feed.pageSize] = true;
-    let pool = [];
-    for (const offset of Object.keys(offsets)) {
-        const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
-        if (json && json.content) pool = pool.concat(filterRatings(parseCards(json.content), allowed));
-    }
-    return pool;
+// ---- what a submission page says about itself (no extra requests)
+
+function emptyInfo() {
+    return { user: null, name: null, tags: [], series: null, collection: null, genreUrl: null };
 }
 
-// The first few pages of a user's movies or audio, rating-filtered.
-function channelPool(user, name, kind, allowed) {
-    user = safeSlug(user);
-    if (!user) return [];
-    const author = new PlatformAuthorLink(
-        new PlatformID(PLATFORM, user, config.id), name, `https://${user}.newgrounds.com`, "");
-    let pool = [];
-    for (let page = 1; page <= RECOMMEND_CHANNEL_PAGES; page++) {
-        const json = getJson(`https://${user}.newgrounds.com/${kind}?page=${page}`, true);
-        if (!json || !json.items) break;
-        for (const y of Object.keys(json.items))
-            for (const cardHtml of json.items[y])
-                pool = pool.concat(datedCards(cardHtml, author, parseInt(y)));
-        if (!(json.load_more && String(json.load_more).trim())) break;
+// Series, collection, genre and tags linked from a submission page.
+function parseRelated(html, kind) {
+    const series = match(html, /href="https:\/\/www\.newgrounds\.com\/series\/([a-z0-9_-]+)"/i);
+    const collection = match(html, /href="https:\/\/www\.newgrounds\.com\/collection\/([a-z0-9_-]+)"/i);
+    let genreUrl = null;
+    if (kind === "movies") {
+        const g = match(html, /\/movies\/browse\?interval=all&(?:amp;)?genre=(\d+)"/);
+        if (g) genreUrl = `${BASE}/movies/browse?interval=all&genre=${g}`;
+    } else {
+        const m = (html || "").match(/\/audio\/browse\?interval=all&(?:amp;)?genre=(\d+)(?:&(?:amp;)?type=(\d+))?"/);
+        if (m) genreUrl = `${BASE}/audio/browse?interval=all&genre=${m[1]}` + (m[2] ? `&type=${m[2]}` : "");
     }
-    return filterRatings(pool, allowed);
-}
-
-// Tag search results for a few of the submission's tags, rating-filtered.
-function tagPool(tags, kind, allowed) {
-    let pool = [];
-    for (const tag of shuffle(tags.slice()).slice(0, RECOMMEND_TAGS)) {
-        const resp = ngGet(`${BASE}/search/conduct/${kind}?match=tags&tags=${encodeURIComponent(tag)}`, {});
-        if (resp.isOk) pool = pool.concat(filterRatings(parseCards(resp.body), allowed));
-    }
-    return pool;
+    return {
+        tags: parseTags(html),
+        series: series ? series.toLowerCase() : null,
+        collection: collection ? collection.toLowerCase() : null,
+        genreUrl
+    };
 }
 
 // Tags listed on a submission page.
@@ -488,7 +473,7 @@ function parseTags(html) {
     const tags = [];
     const re = /\/search\/conduct\/(?:movies|audio)\?match=tags&(?:amp;)?tags=([^"&]+)/g;
     let m;
-    while ((m = re.exec(html)) !== null) {
+    while ((m = re.exec(html || "")) !== null) {
         let tag;
         try { tag = decodeURIComponent(decode(m[1])); } catch (e) { continue; } // skip a badly encoded tag
         if (tag && tags.indexOf(tag) < 0) tags.push(tag);
@@ -496,25 +481,207 @@ function parseTags(html) {
     return tags;
 }
 
-// Creator and tags of a submission, when the details object didn't pass them.
+// Creator and related links of a submission, when the details object didn't pass them.
 function submissionInfo(movieId, audioId) {
+    const kind = movieId ? "movies" : "audio";
     const pageUrl = movieId ? `${BASE}/portal/view/${movieId}` : `${BASE}/audio/listen/${audioId}`;
     const resp = ngGet(pageUrl, {});
     if (resp.isOk) {
         const author = parsePageMeta(resp.body).author;
-        return {
+        return Object.assign(parseRelated(resp.body, kind), {
             user: author ? channelName(author.url) : null,
-            name: author ? author.name : null,
-            tags: parseTags(resp.body)
-        };
+            name: author ? author.name : null
+        });
     }
     // Blocked adult page: the video info still names the creator.
     if (movieId) {
         const json = getJson(`${BASE}/portal/video/${movieId}`, true);
         const user = json && safeSlug(json.author);
-        if (user) return { user, name: String(json.author), tags: [] };
+        if (user) return Object.assign(emptyInfo(), { user, name: String(json.author) });
     }
-    return { user: null, name: null, tags: [] };
+    return emptyInfo();
+}
+
+// ---- cached lists
+
+// How often cached lists (featured, genres, series, collections) are refreshed:
+// the "Refresh recommendation lists" setting. Creator and tag lists: 30 minutes.
+const REFRESH_HOURS = [6, 24, 72, 168];
+const REFRESH_LABELS = ["Every 6 hours", "Every day", "Every 3 days", "Every week"];
+const SHORT_CACHE_MS = 30 * 60 * 1000;
+
+function refreshMs() {
+    const raw = settings.featuredRefresh;
+    let i = parseInt(raw);
+    if (isNaN(i)) i = REFRESH_LABELS.indexOf(String(raw));
+    if (i < 0 || i >= REFRESH_HOURS.length) i = 1; // every day
+    return REFRESH_HOURS[i] * 60 * 60 * 1000;
+}
+
+const listCache = Object.create(null);
+
+// Returns a remembered list if it's fresh enough, else fetches it. Failed
+// fetches aren't remembered. While Newgrounds' bot check is active, nothing new
+// is fetched.
+function cachedList(key, maxAgeMs, fetchItems) {
+    const hit = listCache[key];
+    if (hit && Date.now() - hit.at < maxAgeMs) return hit.items;
+    if (backingOff()) return hit ? hit.items : [];
+    const items = fetchItems();
+    if (items) listCache[key] = { at: Date.now(), items };
+    return items || (hit ? hit.items : []);
+}
+
+// The newest page of a user's movies or audio, rating-filtered.
+function channelPool(user, name, kind, allowed) {
+    user = safeSlug(user);
+    if (!user) return [];
+    const author = new PlatformAuthorLink(
+        new PlatformID(PLATFORM, user, config.id), name, `https://${user}.newgrounds.com`, "");
+    const pool = cachedList(`channel:${user}:${kind}`, SHORT_CACHE_MS, () => {
+        let items = [];
+        for (let page = 1; page <= RECOMMEND_CHANNEL_PAGES; page++) {
+            const json = getJson(`https://${user}.newgrounds.com/${kind}?page=${page}`, true);
+            if (!json) return page === 1 ? null : items;
+            if (!json.items) break;
+            for (const y of Object.keys(json.items))
+                for (const cardHtml of json.items[y])
+                    items = items.concat(datedCards(cardHtml, author, parseInt(y)));
+            if (!(json.load_more && String(json.load_more).trim())) break;
+        }
+        return items;
+    });
+    return filterRatings(pool, allowed);
+}
+
+// Tag search results for a few of the submission's tags, rating-filtered.
+function tagPool(tags, kind, allowed) {
+    let pool = [];
+    for (const tag of shuffle(tags.slice()).slice(0, RECOMMEND_TAGS)) {
+        pool = pool.concat(cachedList(`tag:${kind}:${tag}`, SHORT_CACHE_MS, () => {
+            const resp = ngGet(`${BASE}/search/conduct/${kind}?match=tags&tags=${encodeURIComponent(tag)}`, {});
+            return resp.isOk ? parseCards(resp.body) : null;
+        }));
+    }
+    return filterRatings(pool, allowed);
+}
+
+// A genre's browse page (popular movies or audio in that genre), rating-filtered.
+function genrePool(genreUrl, allowed) {
+    const pool = cachedList(`genre:${genreUrl}`, refreshMs(), () => {
+        const resp = ngGet(genreUrl, {});
+        return resp.isOk ? parseCards(resp.body) : null;
+    });
+    return filterRatings(pool, allowed);
+}
+
+// Items of a series or collection page. Those pages only list IDs
+// (data-visual-link="[type,id]"); visual-links-fetch turns them into cards.
+// Games are left out, since they can't play.
+function visualLinkPool(pageUrl, kind, allowed) {
+    const pool = cachedList(`visual:${pageUrl}:${kind}`, refreshMs(), () => {
+        const page = ngGet(pageUrl, {});
+        if (!page.isOk) return null;
+        const ids = [];
+        const re = /data-visual-link="\[(\d+),(\d+)\]"/g;
+        let m;
+        while ((m = re.exec(page.body)) !== null) ids.push([parseInt(m[1]), parseInt(m[2])]);
+        if (ids.length === 0) return [];
+        const wanted = shuffle(ids).slice(0, RECOMMEND_VISUAL_LINKS);
+        const resp = ngPost(`${BASE}/visual-links-fetch`,
+            "ids=" + encodeURIComponent(JSON.stringify(wanted)) + "&include_all_suitabilities=0",
+            Object.assign({ "Content-Type": "application/x-www-form-urlencoded" }, XHR));
+        if (!resp.isOk) return null;
+        let json;
+        try { json = JSON.parse(resp.body); } catch (e) { return null; }
+        if (!json || !json.partials) return [];
+        let html = "";
+        for (const type of Object.keys(json.partials)) {
+            for (const id of Object.keys(json.partials[type])) {
+                const simple = json.simples && json.simples[type] && json.simples[type][id];
+                if (simple && simple.label === "game") continue;
+                html += json.partials[type][id];
+            }
+        }
+        return parseCards(html).filter(p => kind === "audio" ? p.url.includes("/audio/listen/") : p.url.includes("/portal/view/"));
+    });
+    return filterRatings(pool, allowed);
+}
+
+// ---- featured pool, kept between app restarts
+
+// Featured pages seen so far (from Home or earlier recommendations). They're
+// saved with the plugin's state and thrown away after the refresh interval.
+// A new random page is only fetched while the pool holds fewer than
+// FEATURED_POOL_TARGET items.
+let featuredCache = { movies: Object.create(null), audio: Object.create(null) };
+let featuredSince = 0;
+
+function expireFeatured() {
+    if (featuredSince && Date.now() - featuredSince < refreshMs()) return;
+    featuredCache = { movies: Object.create(null), audio: Object.create(null) };
+    featuredSince = Date.now();
+}
+
+function rememberFeatured(kind, offset, items) {
+    expireFeatured();
+    if (featuredCache[kind] && items.length > 0) featuredCache[kind][offset] = items;
+}
+
+function cachedFeatured(kind) {
+    let all = [];
+    for (const offset of Object.keys(featuredCache[kind])) all = all.concat(featuredCache[kind][offset]);
+    return all;
+}
+
+function featuredPool(kind, allowed) {
+    expireFeatured();
+    const feed = FEATURED_FEEDS[kind];
+    if (!backingOff()) {
+        if (!feed.total && Object.keys(featuredCache[kind]).length === 0) fetchFeaturedPage(kind, 0);
+        if (cachedFeatured(kind).length < FEATURED_POOL_TARGET && feed.total) {
+            const reachable = Math.min(feed.total, FEATURED_MAX_OFFSET);
+            const pageCount = Math.max(1, Math.ceil(reachable / feed.pageSize));
+            const offset = Math.floor(Math.random() * pageCount) * feed.pageSize;
+            if (!featuredCache[kind][offset]) fetchFeaturedPage(kind, offset);
+        }
+    }
+    return filterRatings(cachedFeatured(kind), allowed);
+}
+
+function fetchFeaturedPage(kind, offset) {
+    const feed = FEATURED_FEEDS[kind];
+    const json = getJson(`${BASE}/${feed.path}?offset=${offset}&inner=1`, true);
+    if (!json) return;
+    if (json.total) feed.total = json.total;
+    rememberFeatured(kind, offset, parseCards(json.content || ""));
+}
+
+// Compact copies for saving: only what's needed to rebuild the card.
+function featuredForSaving() {
+    const out = { since: featuredSince, movies: {}, audio: {} };
+    for (const kind of ["movies", "audio"])
+        for (const offset of Object.keys(featuredCache[kind]))
+            out[kind][offset] = featuredCache[kind][offset].map(v => v._ngCard).filter(Boolean);
+    return out;
+}
+
+function featuredFromSaved(saved) {
+    featuredCache = { movies: Object.create(null), audio: Object.create(null) };
+    featuredSince = 0;
+    if (!saved || typeof saved !== "object") return;
+    const since = Number(saved.since);
+    if (!Number.isFinite(since) || since <= 0) return;
+    featuredSince = since;
+    for (const kind of ["movies", "audio"]) {
+        const pages = saved[kind];
+        if (!pages || typeof pages !== "object") continue;
+        for (const offset of Object.keys(pages)) {
+            if (!/^\d{1,5}$/.test(offset) || !Array.isArray(pages[offset])) continue;
+            const items = pages[offset].map(cardToVideo).filter(Boolean);
+            if (items.length > 0) featuredCache[kind][offset] = items;
+        }
+    }
 }
 
 function shuffle(list) {
@@ -820,6 +987,33 @@ function channelName(url) {
 
 // Parses movie/audio cards from any Newgrounds listing HTML
 // (featured feed, search results, user pages).
+// A card is the small set of fields a list item needs. Cards are what gets
+// saved for the featured pool, so they're checked again when rebuilt.
+function cardToVideo(card, author) {
+    if (!card || typeof card !== "object" || !/^\d{1,9}$/.test(String(card.id))) return null;
+    const isAudio = !!card.audio;
+    const rating = /^[etma]$/.test(card.rating || "") ? card.rating : null;
+    const title = String(card.title ?? "").slice(0, 300);
+    const url = isAudio ? `${BASE}/audio/listen/${card.id}` : `${BASE}/portal/view/${card.id}`;
+    const views = Number.isFinite(card.views) ? card.views : 0;
+    const video = new PlatformVideo({
+        id: new PlatformID(PLATFORM, isAudio ? "audio-" + card.id : String(card.id), config.id),
+        name: tagTitle(title, rating),
+        thumbnails: thumbs(safeImageUrl(card.thumb)),
+        author: author ?? authorFromName(String(card.author ?? "Unknown").slice(0, 100)),
+        uploadDate: 0,
+        datetime: 0,
+        duration: 0,
+        viewCount: views,
+        url: url,
+        shareUrl: url,
+        isLive: false
+    });
+    if (rating) video._ngRating = rating;
+    video._ngCard = { id: String(card.id), audio: isAudio, title, thumb: safeImageUrl(card.thumb), author: video.author.name, views, rating };
+    return video;
+}
+
 function parseCards(html, fallbackAuthor) {
     const out = [];
     const seen = Object.create(null);
@@ -849,25 +1043,15 @@ function parseCards(html, fallbackAuthor) {
         if (!author) author = authorFromName("Unknown");
 
         const viewsStr = match(body, /([\d,]+)\s+Views/i);
-        const url = isAudio ? `${BASE}/audio/listen/${id}` : `${BASE}/portal/view/${id}`;
         // Age rating (e/t/m/a); movie cards show it, audio cards don't.
         const rating = isAudio ? null : match(body, /rated-([etma])\b/);
 
-        const video = new PlatformVideo({
-            id: new PlatformID(PLATFORM, isAudio ? "audio-" + id : id, config.id),
-            name: tagTitle(htmlToText(title), rating),
-            thumbnails: thumbs(thumb),
-            author: author,
-            uploadDate: 0,
-            datetime: 0,
-            duration: 0,
-            viewCount: viewsStr ? parseInt(viewsStr.replace(/,/g, "")) : 0,
-            url: url,
-            shareUrl: url,
-            isLive: false
-        });
-        if (rating) video._ngRating = rating;
-        out.push(video);
+        const card = {
+            id, audio: isAudio, title: htmlToText(title), thumb: thumb || "",
+            author: author.name, views: viewsStr ? parseInt(viewsStr.replace(/,/g, "")) : 0, rating
+        };
+        const video = cardToVideo(card, author);
+        if (video) out.push(video);
     }
     return out;
 }
@@ -916,6 +1100,12 @@ function ngGet(url, headers) {
             return retry;
         }
     }
+    return resp;
+}
+
+function ngPost(url, body, headers) {
+    const resp = http.POST(url, body, headers || {}, false);
+    if (isGuard(resp)) noteGuard();
     return resp;
 }
 

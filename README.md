@@ -12,7 +12,7 @@ Files:
 - **Content ratings**: plugin settings choose which age ratings (E / T / M / A) show up in search, channels, favorites and recommendations
 - **Channel search**: finds Newgrounds users
 - **Playback**: movies stream as MP4 (360p/720p/1080p, whatever the upload has); audio plays as MP3
-- **Recommendations**: 15 picks mixed together: 5 from the creator's own channel, 5 from other creators sharing the video's tags, and 5 featured. Movies under a movie, audio under audio, new picks every time. If a video has no tags or the channel has few uploads, featured picks fill the gap
+- **Recommendations**: 15 picks related to what you're watching, mixed together: up to 4 from the same series (sequels and episodes), 4 from the same creator, 4 from the same genre, and 3 from the same collection or tags. Featured picks fill any gaps. Movies under a movie, audio under audio. The lists are cached, and the featured pool is kept between restarts, so most videos need few or no new requests
 - **Comments**: Newgrounds reviews show as comments, with the reviewer, date and star score (newest first)
 - **Channels**: `https://USERNAME.newgrounds.com`: profile, fan count, and all of the user's movies, then their audio
 - **Favorites**: `USERNAME.newgrounds.com/favorites/movies` and `/favorites/audio` open as playlists
@@ -81,6 +81,8 @@ In Grayjay, open the Newgrounds source's settings to choose which age ratings to
 **Seeing adult (A) results in search:** Newgrounds only sends A-rated results to accounts that allow them, so turning on the plugin setting isn't enough on its own. On newgrounds.com, logged in with the same account, open any search page and tick **A** next to "Ratings" (your account must have an 18+ birthday). The plugin then shows them.
 
 **Rating tags:** movie titles start with their age rating, like **[E]**, **[T]**, **[M]** or **[A]**. Grayjay doesn't let plugins draw on thumbnails, so the title is the closest spot. Turn off "Show rating in titles" to hide them.
+
+**Refresh recommendation lists:** how often the featured, genre, series and collection lists behind Recommended are fetched again: every 6 hours, every day (default), every 3 days or every week. Longer means fewer requests to Newgrounds. Creator and tag lists refresh every 30 minutes.
 
 **Author pictures:** Newgrounds list pages don't include profile pictures, so the plugin looks them up from each author's page. Turn off "Show author pictures in lists" in the plugin settings if lists load slowly.
 

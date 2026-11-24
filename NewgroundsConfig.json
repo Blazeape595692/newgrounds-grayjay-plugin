@@ -7,10 +7,10 @@
 	"sourceUrl": "https://blazeape595692.github.io/newgrounds-grayjay-plugin/NewgroundsConfig.json",
 	"repositoryUrl": "https://github.com/Blazeape595692/newgrounds-grayjay-plugin",
 	"scriptUrl": "./NewgroundsScript.js",
-	"version": 17,
+	"version": 18,
 	"iconUrl": "./NewgroundsIcon.png",
 	"id": "179bdaf8-8e57-40aa-bb27-3eb19403f8f7",
-	"scriptSignature": "LND6uFvSPK6sv8Q+CUPLDdzLL3rMLzE9nUUGk3w/oe5TCuloIfX5iEYiijLYgwYtWgDBup/7IlhTMgIaJaDggQkQY5iA6JgGi4iT6dDW8OpmOu5AqmJJQ6qEADl35cLKZX+e7QQ3/qGZD5unksSiEQCKjycM2a5PmSPjQv7QLLyCrJOddt2KOyoM2a8aAbzx+H+s2OsJbsYpfghpxMl3oCqGS4No/YaqfsFkMbtx5s5PCuvTtIuIN/0BBnACWVVLTRGyGMFii66xIKIvYSHVd1pMJm8YQl3PUrow8SF3w37Gk4Q8HKCIjmlmFRiTtI9C4a+4CYprR8fWt7bCeZh19A==",
+	"scriptSignature": "JCTXIgZWc8FgAclNThG8pyxe+EtUMx9idyShWs0wG5tIKD0+hu/7RHKDRk0kYYwwc1ZI2OuA2twwIu/ovONYYzlZ+Tw1B1jIykAWI0EBby8E3ZS6EtVBd8d8GayjHVj0/OBP8SGzpBipKN8AAwNxD0pJLHLkdPe/SJU/GCmi7fyGWsi9FVjExiRnU4CIP3C59Qda3Vc4idrpjapdi/rbpFKw1dz9vpqR85GR9OB0zGp3yTG3vifx6GAAMvmJp+1Hl2y9lu9ild2aPSAfCQ/G77WY6uv39WAZztj/1s43f3xNPMy/FtLi5DpZzKl6oilAWeJUsuDL3Az/fTNa4PigVQ==",
 	"scriptPublicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx5Fueo7N+toYsVtk159/k6w7YLtU+9lBdUdKT/m7rYpGwD0CBQd3BwggG8CTWXN4R0LSTMmUHHaLAPCb8cPF/TUAOqzg30k816AtRkZeVqowH8LNUnH46nIto7Bn6VasQTMYgMYkfSbsNGlQ5IqMFy7ypwvpok1PHRbXsbaRkbEkGz8Z14bWdo28aHenu9VaqI4f6I9WT/ftKtr7yHX8DKdm7TbWP+fH8i4nKWV53fKXt96jmIvDedNsZC3dTqCNH5QJhAJ1umKG6Gg2QMhDxpgpKkJU3QXmbLvR8yqtbuXAjouPhpgrM1uYSwD77OyZ/k+QFz1qE5MW7rRpsiIojQIDAQAB",
 	"packages": [
 		"Http"
@@ -46,6 +46,19 @@
 			"description": "Puts the age rating in front of movie titles, like [T] or [A]. Audio isn't rated, so it has no tag.",
 			"type": "Boolean",
 			"default": "true"
+		},
+		{
+			"variable": "featuredRefresh",
+			"name": "Refresh recommendation lists",
+			"description": "How often the featured, genre, series and collection lists used for Recommended are fetched again. Longer means fewer requests to Newgrounds.",
+			"type": "Dropdown",
+			"default": "1",
+			"options": [
+				"Every 6 hours",
+				"Every day",
+				"Every 3 days",
+				"Every week"
+			]
 		},
 		{
 			"variable": "ratingsHeader",
