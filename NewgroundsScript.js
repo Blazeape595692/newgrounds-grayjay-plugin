@@ -244,6 +244,7 @@ source.getContentDetails = function (url) {
         ? channelName(details.author.url) : null;
     const info = Object.assign(emptyInfo(), details._ngInfo || {},
         { user, name: details.author ? details.author.name : null });
+    info.collaborators = (info.collaborators || []).filter(c => c.user !== user);
     delete details._ngInfo;
     details.getContentRecommendations = function () {
         return source.getContentRecommendations(url, info);
@@ -306,11 +307,11 @@ function getMovieDetails(id) {
         url: pageUrl,
         shareUrl: pageUrl,
         isLive: false,
-        description: meta.description,
+        description: withCredits(meta.description, meta.credits),
         video: new VideoSourceDescriptor(sources),
         rating: meta.rating
     });
-    details._ngInfo = parseRelated(html, "movies");
+    details._ngInfo = Object.assign(parseRelated(html, "movies"), { collaborators: meta.credits });
     return details;
 }
 
@@ -344,11 +345,11 @@ function getAudioDetails(id) {
         url: pageUrl,
         shareUrl: pageUrl,
         isLive: false,
-        description: meta.description,
+        description: withCredits(meta.description, meta.credits),
         video: new UnMuxVideoSourceDescriptor([], [audio]),
         rating: meta.rating
     });
-    details._ngInfo = parseRelated(html, "audio");
+    details._ngInfo = Object.assign(parseRelated(html, "audio"), { collaborators: meta.credits });
     return details;
 }
 
@@ -380,7 +381,34 @@ function parsePageMeta(html) {
     const ratingValue = parseFloat(metaItemprop(html, "ratingValue"));
     if (!isNaN(ratingValue)) rating = new RatingScaler(ratingValue / 10);
 
-    return { title, thumbnail, date, views, description, author, rating };
+    return { title, thumbnail, date, views, description, author, rating, credits: parseCredits(html) };
+}
+
+const MAX_CREDITS = 20;
+
+// Everyone credited on a submission page, with their role ("Artist", "Music"...).
+function parseCredits(html) {
+    const credits = [];
+    const seenUsers = Object.create(null);
+    const re = /class="item-user"[^>]*>([\s\S]*?)<div class="item-follow-user"/g;
+    let m;
+    while ((m = re.exec(html || "")) !== null && credits.length < MAX_CREDITS) {
+        const block = m[1];
+        const user = safeSlug((match(block, /href="https:\/\/([a-z0-9_-]+)\.newgrounds\.com"/i) || "").toLowerCase());
+        const name = decode(match(block, /<h4[^>]*>\s*<a [^>]*>([^<]+)<\/a>/) || "").trim().slice(0, 64);
+        if (!user || !name || seenUsers[user]) continue;
+        seenUsers[user] = true;
+        const role = decode(match(block, /class="role"[^>]*>\s*<em>([^<]*)<\/em>/) || "").trim().slice(0, 64);
+        credits.push({ user, name, role });
+    }
+    return credits;
+}
+
+// Lists the credited people at the bottom of the description, when there's more than one.
+function withCredits(description, credits) {
+    if (!credits || credits.length < 2) return description;
+    const lines = credits.map(c => `${c.name}${c.role ? " (" + c.role + ")" : ""}: https://${c.user}.newgrounds.com`);
+    return (description ? description + "\n\n" : "") + "Credits:\n" + lines.join("\n");
 }
 
 // ---------------------------------------------------------------- recommendations
@@ -397,6 +425,7 @@ function parsePageMeta(html) {
 const RECOMMEND_COUNT = 15;
 const RECOMMEND_SERIES = 4;
 const RECOMMEND_CREATOR = 4;
+const RECOMMEND_COLLAB = 3;            // from one randomly chosen collaborator
 const RECOMMEND_GENRE = 4;
 const RECOMMEND_THEME = 3;            // collection, or tags
 const RECOMMEND_CHANNEL_PAGES = 1;    // channel pages to pick from
@@ -440,12 +469,16 @@ source.getContentRecommendations = function (url, initialData) {
     // While Newgrounds' bot check is active, only lists already cached are used.
     const fromSeries = info.series ? safely(() => take(visualLinkPool(`${BASE}/series/${info.series}`, kind, allowed), RECOMMEND_SERIES)) : [];
     const fromCreator = info.user ? safely(() => take(channelPool(info.user, info.name || info.user, kind, allowed), RECOMMEND_CREATOR)) : [];
+    // One collaborator only, to keep requests (and NG Guard) down.
+    const collabs = (info.collaborators || []).filter(c => c.user !== info.user);
+    const collab = collabs.length > 0 ? collabs[Math.floor(Math.random() * collabs.length)] : null;
+    const fromCollab = collab ? safely(() => take(collaboratorPool(collab, kind, allowed), RECOMMEND_COLLAB)) : [];
     const fromGenre = info.genreUrl ? safely(() => take(genrePool(info.genreUrl, allowed), RECOMMEND_GENRE, notCreator)) : [];
     let fromTheme = info.collection ? safely(() => take(visualLinkPool(`${BASE}/collection/${info.collection}`, kind, allowed), RECOMMEND_THEME, notCreator)) : [];
     if (fromTheme.length < RECOMMEND_THEME && info.tags && info.tags.length > 0)
         fromTheme = fromTheme.concat(safely(() => take(tagPool(info.tags, kind, allowed), RECOMMEND_THEME - fromTheme.length, notCreator)));
 
-    let picks = fromSeries.concat(fromCreator, fromGenre, fromTheme);
+    let picks = fromSeries.concat(fromCreator, fromCollab, fromGenre, fromTheme);
     picks = picks.concat(safely(() => take(featuredPool(kind, allowed), RECOMMEND_COUNT - picks.length)));
     return new VideoPager(withAvatars(shuffle(picks)), false);
 };
@@ -453,7 +486,7 @@ source.getContentRecommendations = function (url, initialData) {
 // ---- what a submission page says about itself (no extra requests)
 
 function emptyInfo() {
-    return { user: null, name: null, tags: [], series: null, collection: null, genreUrl: null };
+    return { user: null, name: null, tags: [], series: null, collection: null, genreUrl: null, collaborators: [] };
 }
 
 // Series, collection, genre and tags linked from a submission page.
@@ -495,10 +528,12 @@ function submissionInfo(movieId, audioId) {
     const pageUrl = movieId ? `${BASE}/portal/view/${movieId}` : `${BASE}/audio/listen/${audioId}`;
     const resp = ngGet(pageUrl, {});
     if (resp.isOk) {
-        const author = parsePageMeta(resp.body).author;
+        const meta = parsePageMeta(resp.body);
+        const author = meta.author;
         return Object.assign(parseRelated(resp.body, kind), {
             user: author ? channelName(author.url) : null,
-            name: author ? author.name : null
+            name: author ? author.name : null,
+            collaborators: meta.credits
         });
     }
     // Blocked adult page: the video info still names the creator.
@@ -569,6 +604,15 @@ function channelPool(user, name, kind, allowed) {
         return items;
     });
     return filterRatings(pool, allowed);
+}
+
+// A collaborator's newest movies (or audio). A musician on a movie may only post
+// audio, so their audio is used when they have no movies; that second list is
+// only fetched when the first comes back empty.
+function collaboratorPool(collab, kind, allowed) {
+    const pool = channelPool(collab.user, collab.name, kind, allowed);
+    if (pool.length > 0 || kind !== "movies" || backingOff()) return pool;
+    return channelPool(collab.user, collab.name, "audio", allowed);
 }
 
 // Tag search results for a few of the submission's tags, rating-filtered.
